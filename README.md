@@ -1,6 +1,10 @@
 # HeptapodLocalSpeechEngine
 
-HeptapodLocalSpeechEngine is a Swift package architecture for local speech-to-speech translation on Apple platforms. The goal is to build a private, offline-capable alternative to cloud realtime speech translation for NoBorderX and future apps.
+<p align="center">
+  <img src="Assets/heptapod-logo.png" alt="Heptapod app logo" width="160">
+</p>
+
+HeptapodLocalSpeechEngine is a Swift package architecture for local speech-to-speech translation on Apple platforms. The goal is to build a private, offline-capable alternative to cloud realtime speech translation for Heptapod and future apps.
 
 The package is intentionally model-agnostic. Each stage can be swapped independently:
 
@@ -23,7 +27,7 @@ The first production goal is not to beat OpenAI Realtime immediately. The first 
 - gives clear model size and quality tradeoffs,
 - can improve over time as better ASR, translation, and TTS adapters are added.
 
-OpenAI Realtime gives a single cloud service for low-latency speech-to-speech translation. Local models are not yet as clean for production, so the practical local path is a staged pipeline. The package keeps each stage behind a protocol so NoBorderX can choose a small/private mode or a higher-quality/heavier mode.
+OpenAI Realtime gives a single cloud service for low-latency speech-to-speech translation. Local models are not yet as clean for production, so the practical local path is a staged pipeline. The package keeps each stage behind a protocol so Heptapod can choose a small/private mode or a higher-quality/heavier mode.
 
 ## Design Principles
 
@@ -223,7 +227,7 @@ Useful advanced metrics:
 ## Adapter Roadmap
 
 1. `Qwen3ASRAdapter`
-   - Reuse the existing NoBorderX Qwen3 ASR logic.
+   - Reuse the existing Heptapod Qwen3 ASR logic.
    - Add model cache reporting.
    - Add segment-level transcription.
 
@@ -250,10 +254,10 @@ Useful advanced metrics:
 7. `SeamlessM4TExperimentAdapter`
    - Keep as research-only until packaging and latency are proven.
 
-## NoBorderX Integration Plan
+## Heptapod Integration Plan
 
 1. Keep HeptapodLocalSpeechEngine as a standalone Swift package.
-2. Add it to NoBorderX through Swift Package Manager.
+2. Add it to Heptapod through Swift Package Manager.
 3. Build a Local Engine settings page:
    - ASR model picker,
    - translation model picker,
@@ -281,10 +285,10 @@ That can be added later, but the first version should prioritize correctness and
 
 ## Integration Plan
 
-1. Keep this package independent from NoBorderX UI.
+1. Keep this package independent from Heptapod UI.
 2. Implement adapters one at a time, starting with existing Qwen3 ASR.
 3. Add model download/cache management per adapter.
-4. Add a NoBorderX settings screen for local engine model selection.
+4. Add a Heptapod settings screen for local engine model selection.
 5. Add benchmark logging: latency, disk size, memory pressure, and translation quality notes.
 
 ## Current State

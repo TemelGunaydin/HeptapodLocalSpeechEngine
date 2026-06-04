@@ -55,4 +55,4 @@ The UI owns:
 
 Adapters conform to protocols in `Core/EngineProtocols.swift`. The app should depend on protocols and descriptors, not concrete model packages.
 
-This keeps the product free to move from Qwen to WhisperKit, from MADLAD to NLLB, or from Kokoro to Qwen3-TTS without rewriting the NoBorderX feature surface.
+This keeps the product free to move from Qwen to WhisperKit, from MADLAD to NLLB, or from Kokoro to Qwen3-TTS without rewriting the Heptapod feature surface.
