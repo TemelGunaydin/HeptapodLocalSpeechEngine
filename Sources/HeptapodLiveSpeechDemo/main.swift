@@ -96,7 +96,8 @@ struct HeptapodLiveSpeechDemo {
                 chatterboxPythonExecutable: options.ttsPythonExecutable,
                 chatterboxScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
                 chatterboxVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:)),
-                chatterboxDevice: options.ttsDevice
+                chatterboxDevice: options.ttsDevice,
+                chatterboxUsesPersistentWorker: options.usesChatterboxPersistentWorker
             )
         }
 
@@ -122,6 +123,7 @@ struct HeptapodLiveSpeechDemo {
         Target: \(targetLanguageCode)
         Speak: \(options.shouldSpeak || options.shouldPlayOutput ? "on" : "off")
         Translation timing: \(options.usesSentenceBuffering ? "sentence/pause buffered" : "every chunk")
+        ASR stabilization: \(options.usesASRStabilization ? "sliding window stable-prefix" : "off")
         Latency preset: \(options.latencyPreset.rawValue)
         Chunk duration: \(String(format: "%.2f", options.chunkDurationSeconds))s
 
@@ -154,12 +156,15 @@ struct HeptapodLiveSpeechDemo {
                               Flush sentence buffer after this many ASR segments.
           --punctuation-endpoint
                               Flush early when ASR text ends with sentence punctuation.
+          --no-asr-stabilization
+                              Disable sliding-window stable-prefix ASR buffering.
           --tts <name>        Real mode TTS backend: kokoro or chatterbox. Default: kokoro.
           --tts-script <path> Chatterbox bridge script. Default: Tools/chatterbox_tts.py.
           --tts-python <name> Python executable for Chatterbox. Default: python3.
           --tts-device <name> Chatterbox torch device: auto, cpu, mps, or cuda.
           --tts-voice-prompt <path>
                               Optional reference WAV for Chatterbox voice cloning.
+          --tts-one-shot      Run a new Chatterbox Python process for each segment.
           --chunk-translation
                               Translate every audio chunk instead of waiting for sentence/pause endpointing.
           --output-dir <path> Write synthesized live segments as WAV files.
@@ -408,12 +413,14 @@ private struct DemoOptions {
     let chunkDurationSeconds: Double
     let maximumBufferedSegments: Int
     let usesPunctuationEndpoint: Bool
+    let usesASRStabilization: Bool
     let targetLanguageCode: String?
     let ttsBackend: DemoTTSBackend
     let ttsScriptPath: String?
     let ttsPythonExecutable: String
     let ttsDevice: String?
     let ttsVoicePromptPath: String?
+    let usesChatterboxPersistentWorker: Bool
     let durationSeconds: Double?
     let audioPath: String?
     let outputDirectory: String?
@@ -432,12 +439,14 @@ private struct DemoOptions {
         var chunkDurationSeconds: Double?
         var maximumBufferedSegments: Int?
         var usesPunctuationEndpoint = false
+        var usesASRStabilization: Bool?
         var targetLanguageCode: String?
         var ttsBackend = DemoTTSBackend.kokoro
         var ttsScriptPath: String?
         var ttsPythonExecutable = "python3"
         var ttsDevice: String?
         var ttsVoicePromptPath: String?
+        var usesChatterboxPersistentWorker = true
         var durationSeconds: Double?
         var audioPath: String?
         var outputDirectory: String?
@@ -486,6 +495,8 @@ private struct DemoOptions {
                 maximumBufferedSegments = value
             case "--punctuation-endpoint":
                 usesPunctuationEndpoint = true
+            case "--no-asr-stabilization":
+                usesASRStabilization = false
             case "--to":
                 targetLanguageCode = try Self.value(after: argument, in: arguments, at: &index)
             case "--tts":
@@ -506,6 +517,8 @@ private struct DemoOptions {
                 ttsDevice = rawValue == "auto" ? nil : rawValue
             case "--tts-voice-prompt":
                 ttsVoicePromptPath = try Self.value(after: argument, in: arguments, at: &index)
+            case "--tts-one-shot":
+                usesChatterboxPersistentWorker = false
             case "--output-dir":
                 outputDirectory = try Self.value(after: argument, in: arguments, at: &index)
             case "--duration":
@@ -535,12 +548,14 @@ private struct DemoOptions {
         self.chunkDurationSeconds = chunkDurationSeconds ?? latencyPreset.chunkDurationSeconds
         self.maximumBufferedSegments = maximumBufferedSegments ?? latencyPreset.maximumBufferedSegments
         self.usesPunctuationEndpoint = usesPunctuationEndpoint || latencyPreset.usesPunctuationEndpoint
+        self.usesASRStabilization = usesASRStabilization ?? latencyPreset.usesASRStabilization
         self.targetLanguageCode = targetLanguageCode
         self.ttsBackend = ttsBackend
         self.ttsScriptPath = ttsScriptPath
         self.ttsPythonExecutable = ttsPythonExecutable
         self.ttsDevice = ttsDevice
         self.ttsVoicePromptPath = ttsVoicePromptPath
+        self.usesChatterboxPersistentWorker = usesChatterboxPersistentWorker
         self.durationSeconds = durationSeconds
         self.audioPath = audioPath
         self.outputDirectory = outputDirectory
@@ -590,7 +605,10 @@ private struct DemoOptions {
             flushOnStreamEnd: true,
             flushOnTerminalPunctuation: usesPunctuationEndpoint,
             maximumBufferedSegments: maximumBufferedSegments,
-            minimumWordsForPunctuationEndpoint: latencyPreset.minimumWordsForPunctuationEndpoint
+            minimumWordsForPunctuationEndpoint: latencyPreset.minimumWordsForPunctuationEndpoint,
+            asrStabilization: usesASRStabilization
+                ? latencyPreset.asrStabilizationConfiguration
+                : .disabled
         )
     }
 
@@ -653,6 +671,34 @@ private enum DemoLatencyPreset: String {
             6
         case .quality:
             10
+        }
+    }
+
+    var usesASRStabilization: Bool {
+        switch self {
+        case .low, .balanced:
+            true
+        case .quality:
+            false
+        }
+    }
+
+    var asrStabilizationConfiguration: HeptapodASRStabilizationConfiguration {
+        switch self {
+        case .low:
+            HeptapodASRStabilizationConfiguration(
+                isEnabled: true,
+                maximumWindowChunks: 3,
+                minimumStableWords: 2
+            )
+        case .balanced:
+            HeptapodASRStabilizationConfiguration(
+                isEnabled: true,
+                maximumWindowChunks: 4,
+                minimumStableWords: 3
+            )
+        case .quality:
+            .disabled
         }
     }
 }

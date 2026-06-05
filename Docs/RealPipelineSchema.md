@@ -126,20 +126,33 @@ buffered while speech continues, then translation and TTS run after a silence
 endpoint or stream end. `--chunk-translation` keeps the older per-chunk behavior
 for debugging latency.
 The demo exposes `--latency low|balanced|quality`, `--chunk-duration`,
-`--max-buffered-segments`, and `--punctuation-endpoint` so the cascaded local
-pipeline can move along the speed/quality tradeoff without changing code.
+`--max-buffered-segments`, `--punctuation-endpoint`, and
+`--no-asr-stabilization` so the cascaded local pipeline can move along the
+speed/quality tradeoff without changing code.
 
 Current low-latency mode is still cascaded:
 
 ```text
-audio chunks -> VAD -> chunk ASR -> sentence buffer -> MT -> TTS -> playback queue
+audio chunks
+  -> VAD
+  -> sliding ASR window / stable prefix delta
+  -> sentence buffer
+  -> synthesis queue (MT + TTS)
+  -> playback queue
 ```
 
-The playback queue is serial and nonblocking for the input loop. This gives the
-pipeline a backbuffer-like shape: translated/TTS audio for later segments can be
-prepared while an earlier segment is still playing. The next OpenAI-like step is
-replacing chunk ASR with streaming ASR plus stable prefix detection, then
-streaming TTS deltas instead of whole-segment WAV output.
+The Qwen ASR adapter remains chunk-based, but the live session now wraps it in a
+ring-buffer/sliding-window policy. It decodes recent audio context, compares
+neighboring hypotheses, commits only stable prefix deltas downstream, and flushes
+the latest uncommitted hypothesis on a silence endpoint.
+
+The synthesis queue and playback queue are serial and nonblocking for the input
+loop. This gives the pipeline a backbuffer-like shape: later segments can be
+translated and synthesized while an earlier segment is still playing. Chatterbox
+TTS also has a persistent Python worker mode, which avoids per-segment process
+startup and model reload overhead. The next OpenAI-like step is a model-native
+streaming ASR backend and streaming TTS deltas instead of whole-segment WAV
+output.
 
 The remaining work is app-level polish: permission UX, background audio
 behavior, streaming partial-ASR improvements, and production playback

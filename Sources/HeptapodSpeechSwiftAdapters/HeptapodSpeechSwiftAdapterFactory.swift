@@ -27,6 +27,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         chatterboxScriptURL: URL? = nil,
         chatterboxVoicePromptURL: URL? = nil,
         chatterboxDevice: String? = nil,
+        chatterboxUsesPersistentWorker: Bool = true,
         offlineMode: Bool = false
     ) throws -> HeptapodSpeechToSpeechPipeline {
         try requireImplemented(configuration.speechRecognitionModelID, stage: .speechRecognition)
@@ -54,6 +55,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
                 chatterboxScriptURL: chatterboxScriptURL,
                 chatterboxVoicePromptURL: chatterboxVoicePromptURL,
                 chatterboxDevice: chatterboxDevice,
+                chatterboxUsesPersistentWorker: chatterboxUsesPersistentWorker,
                 offlineMode: offlineMode
             )
         )
@@ -82,6 +84,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         chatterboxScriptURL: URL?,
         chatterboxVoicePromptURL: URL?,
         chatterboxDevice: String?,
+        chatterboxUsesPersistentWorker: Bool,
         offlineMode: Bool
     ) -> any HeptapodSpeechSynthesizer {
         switch modelID {
@@ -90,7 +93,8 @@ public enum HeptapodSpeechSwiftAdapterFactory {
                 pythonExecutable: chatterboxPythonExecutable,
                 scriptURL: chatterboxScriptURL,
                 voicePromptURL: chatterboxVoicePromptURL,
-                device: chatterboxDevice
+                device: chatterboxDevice,
+                usesPersistentWorker: chatterboxUsesPersistentWorker
             )
         default:
             HeptapodKokoroTTSAdapter(modelID: kokoroModelID, offlineMode: offlineMode)

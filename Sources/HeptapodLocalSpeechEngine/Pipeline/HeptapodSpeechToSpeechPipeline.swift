@@ -72,11 +72,22 @@ public actor HeptapodSpeechToSpeechPipeline {
         _ chunk: HeptapodAudioChunk,
         sourceLanguageCode: String?
     ) async throws -> HeptapodTranscriptSegment? {
-        if let vad {
-            let containsSpeech = try await vad.containsSpeech(chunk)
-            guard containsSpeech else { return nil }
-        }
+        guard try await containsSpeech(chunk) else { return nil }
 
+        return try await recognizeSpeech(chunk, sourceLanguageCode: sourceLanguageCode)
+    }
+
+    public func containsSpeech(_ chunk: HeptapodAudioChunk) async throws -> Bool {
+        guard let vad else {
+            return true
+        }
+        return try await vad.containsSpeech(chunk)
+    }
+
+    public func recognizeSpeech(
+        _ chunk: HeptapodAudioChunk,
+        sourceLanguageCode: String?
+    ) async throws -> HeptapodTranscriptSegment? {
         guard let transcript = try await recognizer.transcribe(chunk, languageHint: sourceLanguageCode) else {
             return nil
         }

@@ -164,6 +164,13 @@ pause/silence endpoint is detected. This avoids speaking tiny partial fragments
 such as "One of the goals of." Use `--chunk-translation` to restore the older
 translate-every-chunk behavior.
 
+Low and balanced latency presets also enable ASR stabilization. The current
+Qwen adapter is still a chunk decoder, but the live session now wraps it in a
+ring-buffer/sliding-window policy: each new speech chunk is decoded with recent
+audio context, consecutive hypotheses are compared, and only the stable prefix
+delta is sent downstream. On a silence endpoint, the latest uncommitted
+hypothesis is flushed. Use `--no-asr-stabilization` to disable that layer.
+
 Latency tuning:
 
 ```bash
@@ -178,17 +185,18 @@ swift run HeptapodLiveSpeechDemo -- \
 ```
 
 `--latency low` is the default for live demos. It favors earlier translation
-with shorter sentence buffers while keeping 1 second ASR chunks, which is more
-stable for the current chunk-based Qwen ASR adapter. You can still try
-`--chunk-duration 0.5`, but short chunks may hurt recognition quality until a
-true streaming ASR backend lands. Use `--latency balanced` or
-`--latency quality` when translation quality matters more than delay.
+with shorter sentence buffers while keeping 1 second capture chunks, which is
+more stable for the current Qwen ASR adapter. You can still try
+`--chunk-duration 0.5`, but short chunks may hurt recognition quality. Use
+`--latency balanced` or `--latency quality` when translation quality matters
+more than delay.
 
-Playback is queued like a small backbuffer: after a segment is translated and TTS
-audio is generated, it enters a serial playback queue. The live input loop keeps
-transcribing and preparing the next segment while the previous translated audio
-is still playing, then the queued audio starts as soon as the output device is
-free.
+Translation/TTS and playback are queued like a small backbuffer. Once a sentence
+or stable phrase is flushed, the live input loop submits it to a serial synthesis
+queue and immediately keeps consuming audio. The synthesis queue prepares
+translation plus TTS audio in order, then hands ready audio to a separate serial
+playback queue. This lets the next segment transcribe while the previous segment
+is translating, synthesizing, or playing.
 
 More natural Chatterbox TTS output:
 
@@ -204,6 +212,11 @@ HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
   --tts-python .venv-chatterbox311/bin/python \
   --play-output
 ```
+
+Chatterbox uses a persistent Python worker by default, so the model is loaded
+once and later segments are sent over JSON-lines instead of starting a new
+Python process every time. Pass `--tts-one-shot` to use the older per-segment
+process mode for debugging.
 
 For voice cloning, pass a permitted 5-10 second reference WAV:
 

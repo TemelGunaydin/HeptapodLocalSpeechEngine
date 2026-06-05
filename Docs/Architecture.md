@@ -16,7 +16,7 @@ System audio
 This path is practical because each model family can be upgraded independently.
 It is a cascaded realtime pipeline, not a single end-to-end interpreter model:
 latency is managed through chunk size, VAD endpointing, stable sentence buffers,
-and TTS queue behavior.
+sliding ASR stabilization, synthesis queueing, and playback queue behavior.
 
 The currently runnable real-model smoke test is documented in
 [`RealPipelineSchema.md`](RealPipelineSchema.md).
@@ -67,9 +67,11 @@ The live session owns:
 - consuming an async audio chunk source,
 - emitting segment lifecycle events,
 - skipping silent chunks,
-- calling the speech-to-speech pipeline,
+- running optional ring-buffer/sliding-window ASR stabilization,
+- queueing stable transcript segments into serial translation/TTS synthesis,
 - queueing synthesized audio into a serial playback backbuffer,
-- keeping input/ASR work moving while previous translated audio is still playing.
+- keeping input/ASR work moving while previous translated audio is translating,
+  synthesizing, or playing.
 
 The UI owns:
 
