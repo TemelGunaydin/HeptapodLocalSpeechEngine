@@ -125,6 +125,19 @@ Live audio sources now use sentence/pause endpointing by default: ASR text is
 buffered while speech continues, then translation and TTS run after a silence
 endpoint or stream end. `--chunk-translation` keeps the older per-chunk behavior
 for debugging latency.
+The demo exposes `--latency low|balanced|quality`, `--chunk-duration`,
+`--max-buffered-segments`, and `--punctuation-endpoint` so the cascaded local
+pipeline can move along the speed/quality tradeoff without changing code.
+
+Current low-latency mode is still cascaded:
+
+```text
+audio chunks -> VAD -> chunk ASR -> sentence buffer -> MT -> TTS
+```
+
+The next OpenAI-like step is replacing chunk ASR with streaming ASR plus stable
+prefix detection, then streaming or queued TTS deltas instead of whole-segment
+WAV output.
 
 The remaining work is app-level polish: permission UX, background audio
 behavior, streaming partial-ASR improvements, and production playback

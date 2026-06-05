@@ -14,6 +14,9 @@ System audio
 ```
 
 This path is practical because each model family can be upgraded independently.
+It is a cascaded realtime pipeline, not a single end-to-end interpreter model:
+latency is managed through chunk size, VAD endpointing, stable sentence buffers,
+and TTS queue behavior.
 
 The currently runnable real-model smoke test is documented in
 [`RealPipelineSchema.md`](RealPipelineSchema.md).
@@ -27,6 +30,19 @@ System audio
 ```
 
 This path is tracked for research because it is closest to a cloud realtime model. It is not the initial production target because current open models are large and harder to package for native Apple apps.
+
+The OpenAI-like target architecture is:
+
+```text
+streaming audio session
+  -> partial/stable transcript events
+  -> incremental translation events
+  -> audio delta playback
+```
+
+The local product path keeps the cascaded stages for now and incrementally
+pushes latency down before attempting SeamlessStreaming-style end-to-end speech
+translation.
 
 ## Runtime Ownership
 

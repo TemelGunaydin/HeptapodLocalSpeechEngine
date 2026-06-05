@@ -269,6 +269,50 @@ func sentenceBufferedLiveSessionFlushesOneResultAfterSilence() async throws {
 }
 
 @Test
+func sentenceBufferedLiveSessionFlushesAtMaximumBufferedSegments() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("I want to explain".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("how this works".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("before we continue".utf8), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(maximumBufferedSegments: 2)
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == [
+        "I want to explain how this works",
+        "before we continue"
+    ])
+}
+
+@Test
 func wavFilePlaybackSinkWritesSequentialFiles() async throws {
     let outputDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("heptapod-wav-sink-\(UUID().uuidString)")

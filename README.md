@@ -164,6 +164,26 @@ pause/silence endpoint is detected. This avoids speaking tiny partial fragments
 such as "One of the goals of." Use `--chunk-translation` to restore the older
 translate-every-chunk behavior.
 
+Latency tuning:
+
+```bash
+swift run HeptapodLiveSpeechDemo -- \
+  --real \
+  --system-audio \
+  --to tr \
+  --latency low \
+  --max-buffered-segments 3 \
+  --punctuation-endpoint \
+  --play-output
+```
+
+`--latency low` is the default for live demos. It favors earlier translation
+with shorter sentence buffers while keeping 1 second ASR chunks, which is more
+stable for the current chunk-based Qwen ASR adapter. You can still try
+`--chunk-duration 0.5`, but short chunks may hurt recognition quality until a
+true streaming ASR backend lands. Use `--latency balanced` or
+`--latency quality` when translation quality matters more than delay.
+
 More natural Chatterbox TTS output:
 
 ```bash

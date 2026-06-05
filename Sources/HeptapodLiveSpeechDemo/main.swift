@@ -44,6 +44,8 @@ struct HeptapodLiveSpeechDemo {
                     targetLanguageCode: targetLanguageCode,
                     shouldPlayOutput: options.shouldPlayOutput,
                     outputDirectory: options.outputDirectory,
+                    chunkDurationSeconds: options.chunkDurationSeconds,
+                    endpointing: options.endpointingConfiguration,
                     usesSentenceBuffering: options.usesSentenceBuffering
                 )
             } else if options.usesMicrophone {
@@ -53,6 +55,8 @@ struct HeptapodLiveSpeechDemo {
                     durationSeconds: options.durationSeconds,
                     shouldPlayOutput: options.shouldPlayOutput,
                     outputDirectory: options.outputDirectory,
+                    chunkDurationSeconds: options.chunkDurationSeconds,
+                    endpointing: options.endpointingConfiguration,
                     usesSentenceBuffering: options.usesSentenceBuffering
                 )
             } else if options.usesSystemAudio {
@@ -62,6 +66,8 @@ struct HeptapodLiveSpeechDemo {
                     durationSeconds: options.durationSeconds,
                     shouldPlayOutput: options.shouldPlayOutput,
                     outputDirectory: options.outputDirectory,
+                    chunkDurationSeconds: options.chunkDurationSeconds,
+                    endpointing: options.endpointingConfiguration,
                     usesSentenceBuffering: options.usesSentenceBuffering
                 )
             } else if options.isInteractive {
@@ -116,6 +122,8 @@ struct HeptapodLiveSpeechDemo {
         Target: \(targetLanguageCode)
         Speak: \(options.shouldSpeak || options.shouldPlayOutput ? "on" : "off")
         Translation timing: \(options.usesSentenceBuffering ? "sentence/pause buffered" : "every chunk")
+        Latency preset: \(options.latencyPreset.rawValue)
+        Chunk duration: \(String(format: "%.2f", options.chunkDurationSeconds))s
 
         """)
     }
@@ -139,6 +147,13 @@ struct HeptapodLiveSpeechDemo {
           --system-audio      Capture macOS system audio with ScreenCaptureKit.
           --duration <sec>    Stop microphone capture after this many seconds.
           --to <code>         Target language. Default: tr for preview, es for real mode.
+          --latency <preset>  Live timing preset: low, balanced, or quality. Default: low.
+          --chunk-duration <sec>
+                              Audio chunk size for live/file demos. Lower is faster but less stable.
+          --max-buffered-segments <count>
+                              Flush sentence buffer after this many ASR segments.
+          --punctuation-endpoint
+                              Flush early when ASR text ends with sentence punctuation.
           --tts <name>        Real mode TTS backend: kokoro or chatterbox. Default: kokoro.
           --tts-script <path> Chatterbox bridge script. Default: Tools/chatterbox_tts.py.
           --tts-python <name> Python executable for Chatterbox. Default: python3.
@@ -210,16 +225,22 @@ struct HeptapodLiveSpeechDemo {
         durationSeconds: Double?,
         shouldPlayOutput: Bool,
         outputDirectory: String?,
+        chunkDurationSeconds: Double,
+        endpointing: HeptapodSentenceEndpointingConfiguration,
         usesSentenceBuffering: Bool
     ) async throws {
         print("Listening. Stop with Ctrl+C\(durationSeconds.map { " or wait \($0)s" } ?? "").\n")
-        let source = HeptapodAVAudioMicrophoneSource(maximumDurationSeconds: durationSeconds)
+        let source = HeptapodAVAudioMicrophoneSource(
+            chunkDurationSeconds: chunkDurationSeconds,
+            maximumDurationSeconds: durationSeconds
+        )
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
             targetLanguageCode: targetLanguageCode,
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
+            endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
             shouldSpeak: false
         )
@@ -232,6 +253,8 @@ struct HeptapodLiveSpeechDemo {
         durationSeconds: Double?,
         shouldPlayOutput: Bool,
         outputDirectory: String?,
+        chunkDurationSeconds: Double,
+        endpointing: HeptapodSentenceEndpointingConfiguration,
         usesSentenceBuffering: Bool
     ) async throws {
         #if os(macOS)
@@ -240,13 +263,17 @@ struct HeptapodLiveSpeechDemo {
         Stop with Ctrl+C\(durationSeconds.map { " or wait \($0)s" } ?? "").
 
         """)
-        let source = HeptapodScreenCaptureSystemAudioSource(maximumDurationSeconds: durationSeconds)
+        let source = HeptapodScreenCaptureSystemAudioSource(
+            chunkDurationSeconds: chunkDurationSeconds,
+            maximumDurationSeconds: durationSeconds
+        )
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
             targetLanguageCode: targetLanguageCode,
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
+            endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
             shouldSpeak: false
         )
@@ -262,15 +289,21 @@ struct HeptapodLiveSpeechDemo {
         targetLanguageCode: String,
         shouldPlayOutput: Bool,
         outputDirectory: String?,
+        chunkDurationSeconds: Double,
+        endpointing: HeptapodSentenceEndpointingConfiguration,
         usesSentenceBuffering: Bool
     ) async throws {
-        let source = HeptapodAudioFileChunkSource(url: URL(fileURLWithPath: audioPath))
+        let source = HeptapodAudioFileChunkSource(
+            url: URL(fileURLWithPath: audioPath),
+            chunkDurationSeconds: chunkDurationSeconds
+        )
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
             targetLanguageCode: targetLanguageCode,
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
+            endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
             shouldSpeak: false
         )
@@ -314,6 +347,7 @@ struct HeptapodLiveSpeechDemo {
         chunks: AsyncThrowingStream<HeptapodAudioChunk, Error>,
         targetLanguageCode: String,
         playbackSink: (any HeptapodSpeechPlaybackSink)? = nil,
+        endpointing: HeptapodSentenceEndpointingConfiguration = HeptapodSentenceEndpointingConfiguration(),
         usesSentenceBuffering: Bool = false,
         shouldSpeak: Bool
     ) async throws {
@@ -324,7 +358,7 @@ struct HeptapodLiveSpeechDemo {
             playbackSink: playbackSink
         )
         let events = usesSentenceBuffering
-            ? await session.runSentenceBuffered(chunks: chunks)
+            ? await session.runSentenceBuffered(chunks: chunks, endpointing: endpointing)
             : await session.run(chunks: chunks)
 
         for try await event in events {
@@ -370,6 +404,10 @@ private struct DemoOptions {
     let shouldPrintHelp: Bool
     let shouldPrintCacheStatus: Bool
     let usesSentenceBuffering: Bool
+    let latencyPreset: DemoLatencyPreset
+    let chunkDurationSeconds: Double
+    let maximumBufferedSegments: Int
+    let usesPunctuationEndpoint: Bool
     let targetLanguageCode: String?
     let ttsBackend: DemoTTSBackend
     let ttsScriptPath: String?
@@ -390,6 +428,10 @@ private struct DemoOptions {
         var shouldPrintHelp = false
         var shouldPrintCacheStatus = false
         var usesSentenceBuffering = true
+        var latencyPreset = DemoLatencyPreset.low
+        var chunkDurationSeconds: Double?
+        var maximumBufferedSegments: Int?
+        var usesPunctuationEndpoint = false
         var targetLanguageCode: String?
         var ttsBackend = DemoTTSBackend.kokoro
         var ttsScriptPath: String?
@@ -424,6 +466,26 @@ private struct DemoOptions {
                 shouldPrintCacheStatus = true
             case "--chunk-translation":
                 usesSentenceBuffering = false
+            case "--latency":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let preset = DemoLatencyPreset(rawValue: rawValue.lowercased()) else {
+                    throw DemoError.invalidLatencyPreset(rawValue)
+                }
+                latencyPreset = preset
+            case "--chunk-duration":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let value = Double(rawValue), value >= 0.1, value <= 2.0 else {
+                    throw DemoError.invalidPositiveOption(argument, rawValue)
+                }
+                chunkDurationSeconds = value
+            case "--max-buffered-segments":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let value = Int(rawValue), value > 0 else {
+                    throw DemoError.invalidPositiveOption(argument, rawValue)
+                }
+                maximumBufferedSegments = value
+            case "--punctuation-endpoint":
+                usesPunctuationEndpoint = true
             case "--to":
                 targetLanguageCode = try Self.value(after: argument, in: arguments, at: &index)
             case "--tts":
@@ -469,6 +531,10 @@ private struct DemoOptions {
         self.shouldPrintHelp = shouldPrintHelp
         self.shouldPrintCacheStatus = shouldPrintCacheStatus
         self.usesSentenceBuffering = usesSentenceBuffering
+        self.latencyPreset = latencyPreset
+        self.chunkDurationSeconds = chunkDurationSeconds ?? latencyPreset.chunkDurationSeconds
+        self.maximumBufferedSegments = maximumBufferedSegments ?? latencyPreset.maximumBufferedSegments
+        self.usesPunctuationEndpoint = usesPunctuationEndpoint || latencyPreset.usesPunctuationEndpoint
         self.targetLanguageCode = targetLanguageCode
         self.ttsBackend = ttsBackend
         self.ttsScriptPath = ttsScriptPath
@@ -518,6 +584,16 @@ private struct DemoOptions {
         )
     }
 
+    var endpointingConfiguration: HeptapodSentenceEndpointingConfiguration {
+        HeptapodSentenceEndpointingConfiguration(
+            flushOnSilence: true,
+            flushOnStreamEnd: true,
+            flushOnTerminalPunctuation: usesPunctuationEndpoint,
+            maximumBufferedSegments: maximumBufferedSegments,
+            minimumWordsForPunctuationEndpoint: latencyPreset.minimumWordsForPunctuationEndpoint
+        )
+    }
+
     var ttsDescriptor: HeptapodModelDescriptor {
         switch ttsBackend {
         case .kokoro:
@@ -533,6 +609,54 @@ private enum DemoTTSBackend: String {
     case chatterbox
 }
 
+private enum DemoLatencyPreset: String {
+    case low
+    case balanced
+    case quality
+
+    var chunkDurationSeconds: Double {
+        switch self {
+        case .low:
+            1.0
+        case .balanced:
+            1.0
+        case .quality:
+            1.5
+        }
+    }
+
+    var maximumBufferedSegments: Int {
+        switch self {
+        case .low:
+            3
+        case .balanced:
+            5
+        case .quality:
+            8
+        }
+    }
+
+    var usesPunctuationEndpoint: Bool {
+        switch self {
+        case .low:
+            true
+        case .balanced, .quality:
+            false
+        }
+    }
+
+    var minimumWordsForPunctuationEndpoint: Int {
+        switch self {
+        case .low:
+            4
+        case .balanced:
+            6
+        case .quality:
+            10
+        }
+    }
+}
+
 private struct CompositePlaybackSink: HeptapodSpeechPlaybackSink {
     let sinks: [any HeptapodSpeechPlaybackSink]
 
@@ -545,6 +669,8 @@ private struct CompositePlaybackSink: HeptapodSpeechPlaybackSink {
 
 private enum DemoError: LocalizedError {
     case invalidDuration(String)
+    case invalidLatencyPreset(String)
+    case invalidPositiveOption(String, String)
     case invalidTTSBackend(String)
     case invalidTTSDevice(String)
     case audioFileRequiresRealMode
@@ -559,6 +685,10 @@ private enum DemoError: LocalizedError {
         switch self {
         case .invalidDuration(let value):
             "Invalid duration: \(value)."
+        case .invalidLatencyPreset(let value):
+            "Invalid latency preset: \(value). Use low, balanced, or quality."
+        case .invalidPositiveOption(let option, let value):
+            "Invalid value for \(option): \(value)."
         case .invalidTTSBackend(let value):
             "Invalid TTS backend: \(value). Use kokoro or chatterbox."
         case .invalidTTSDevice(let value):
