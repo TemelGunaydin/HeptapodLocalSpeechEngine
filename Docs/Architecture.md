@@ -15,6 +15,9 @@ System audio
 
 This path is practical because each model family can be upgraded independently.
 
+The currently runnable real-model smoke test is documented in
+[`RealPipelineSchema.md`](RealPipelineSchema.md).
+
 ## Direct Speech-to-Speech Pipeline
 
 ```text
@@ -43,6 +46,14 @@ The pipeline owns:
 - combining ASR -> translation -> TTS,
 - rejecting empty/fake output.
 
+The live session owns:
+
+- consuming an async audio chunk source,
+- emitting segment lifecycle events,
+- skipping silent chunks,
+- calling the speech-to-speech pipeline,
+- sending synthesized audio to an optional playback sink.
+
 The UI owns:
 
 - model selection,
@@ -56,3 +67,8 @@ The UI owns:
 Adapters conform to protocols in `Core/EngineProtocols.swift`. The app should depend on protocols and descriptors, not concrete model packages.
 
 This keeps the product free to move from Qwen to WhisperKit, from MADLAD to NLLB, or from Kokoro to Qwen3-TTS without rewriting the Heptapod feature surface.
+
+`HeptapodSpeechSwiftAdapters` is the first concrete adapter target. It keeps
+`speech-swift` and AVFoundation dependencies out of the model-agnostic core
+package while making Silero VAD, Qwen3-ASR, MADLAD-400, Kokoro, microphone
+capture, and playback usable through the core engine protocols.

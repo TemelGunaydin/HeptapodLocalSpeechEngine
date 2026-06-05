@@ -55,7 +55,20 @@ HeptapodLocalSpeechEngine/
         HeptapodPipelineConfiguration.swift
         HeptapodSpeechToSpeechPipeline.swift
       Adapters/
+        HeptapodUnavailableAdapterFactory.swift
         UnavailableModelAdapters.swift
+    HeptapodSpeechSwiftAdapters/
+      HeptapodAVAudioMicrophoneSource.swift
+      HeptapodAVAudioPlaybackSink.swift
+      HeptapodSileroVADAdapter.swift
+      HeptapodQwen3ASRAdapter.swift
+      HeptapodMADLADTranslatorAdapter.swift
+      HeptapodKokoroTTSAdapter.swift
+      HeptapodSpeechSwiftAdapterFactory.swift
+    HeptapodLiveSpeechDemo/
+      main.swift
+    HeptapodRealSpeechDemo/
+      main.swift
   Tests/
     HeptapodLocalSpeechEngineTests/
       HeptapodCatalogTests.swift
@@ -67,6 +80,7 @@ HeptapodLocalSpeechEngine/
   Docs/
     Architecture.md
     ModelMatrix.md
+    RealPipelineSchema.md
 ```
 
 ## Pipeline Contracts
@@ -92,6 +106,73 @@ Direct S2ST
 ```
 
 The direct path is important to track because it is conceptually closest to OpenAI Realtime, but it is not the most practical first implementation.
+
+## Runnable Demos
+
+Scripted pipeline preview without real inference:
+
+```bash
+swift run HeptapodLiveSpeechDemo
+```
+
+Preview interactive live session:
+
+```bash
+swift run HeptapodLiveSpeechDemo -- --interactive
+```
+
+Starter model cache status:
+
+```bash
+swift run HeptapodLiveSpeechDemo -- --cache-status
+```
+
+Real file-backed live session:
+
+```bash
+HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
+  --real \
+  --audio /path/to/input.wav \
+  --to es \
+  --output-dir /tmp/heptapod-live
+```
+
+Real microphone live session:
+
+```bash
+HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
+  --real \
+  --microphone \
+  --to es \
+  --duration 10 \
+  --play-output
+```
+
+Real local model smoke test from an audio file:
+
+```bash
+HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodRealSpeechDemo -- \
+  --audio /path/to/input.wav \
+  --from en \
+  --to es \
+  --tts-language es \
+  --output /tmp/heptapod-output.wav \
+  --report /tmp/heptapod-real-report.json
+```
+
+The real demo uses Qwen3-ASR, MADLAD-400, and Kokoro through the
+`HeptapodSpeechSwiftAdapters` target, which wraps `speech-swift`.
+The first run downloads model weights from Hugging Face and caches them locally.
+The JSON report records model load times, per-stage inference latency, transcript,
+translation, audio durations, and output paths.
+The current real pipeline schema is documented in
+[`Docs/RealPipelineSchema.md`](Docs/RealPipelineSchema.md).
+MLX inference also requires `mlx.metallib`; if it is missing, install the Metal Toolchain and build the shader library:
+
+```bash
+xcodebuild -downloadComponent MetalToolchain
+BUILD_DIR="$(pwd)/.build" .build/checkouts/speech-swift/scripts/build_mlx_metallib.sh debug
+```
 
 ## Model Families In The Catalog
 
@@ -124,16 +205,16 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 
 | Stage | Model | Runtime | Status | Estimated Install | Best For | Main Tradeoff |
 | --- | --- | --- | --- | ---: | --- | --- |
-| VAD | Silero VAD | CoreML | Adapter required | ~8 MB | Silence gating | No transcription |
-| ASR | Qwen3 ASR 0.6B 4-bit | MLX Swift | Ready in app, adapter pending | ~760 MB | Starter local mode | Segment-based, lower noisy-audio accuracy |
-| ASR | Qwen3 ASR 1.7B 8-bit | MLX Swift | Ready in app, adapter pending | ~3.6 GB | Higher ASR quality | More memory and disk |
+| VAD | Silero VAD | CoreML | Adapter target ready | ~8 MB | Silence gating | No transcription |
+| ASR | Qwen3 ASR 0.6B 4-bit | MLX Swift | Adapter target ready | ~760 MB | Starter local mode | Segment-based, lower noisy-audio accuracy |
+| ASR | Qwen3 ASR 1.7B 8-bit | MLX Swift | Runnable candidate, adapter pending | ~3.6 GB | Higher ASR quality | More memory and disk |
 | ASR | WhisperKit Base | CoreML/WhisperKit | Planned | ~220 MB | Streaming ASR, timestamps | Separate model management |
 | ASR | WhisperKit Large v3 | CoreML/WhisperKit | Planned | ~3.4 GB | Maximum ASR quality | Heavy |
 | ASR | Parakeet Streaming | CoreML | Planned | ~340 MB | True partial ASR | Language coverage depends on variant |
-| MT | MADLAD-400 3B | MLX Swift | Ready candidate | ~2.8 GB | First local translation | Quality varies by language pair |
+| MT | MADLAD-400 3B | MLX Swift | Adapter target ready | ~2.8 GB | First local translation | Quality varies by language pair |
 | MT | NLLB Distilled 600M | Custom/converted | Planned | ~1.6 GB | Better translation candidate | Runtime conversion needed |
 | MT | SeamlessM4T text path | Seamless | Research | ~4.8 GB | Unified research path | Heavy packaging |
-| TTS | Kokoro 82M | CoreML | Adapter required | ~130 MB | Small local TTS | Less natural |
+| TTS | Kokoro 82M | CoreML | Adapter target ready | ~130 MB | Small local TTS | Less natural |
 | TTS | Qwen3 TTS 0.6B | MLX Swift | Planned | ~1.2 GB | Natural local speech | Memory/GPU pressure |
 | TTS | CosyVoice3 0.5B | MLX Swift | Planned | ~1.0 GB | Expressive TTS | Adapter and voice management |
 | Direct S2ST | SeamlessM4T v2 | Seamless | Research | ~10 GB | Single-family speech translation | Too heavy for first production path |
@@ -226,32 +307,38 @@ Useful advanced metrics:
 
 ## Adapter Roadmap
 
-1. `Qwen3ASRAdapter`
-   - Reuse the existing Heptapod Qwen3 ASR logic.
-   - Add model cache reporting.
-   - Add segment-level transcription.
+1. `HeptapodQwen3ASRAdapter`
+   - Status: ready in `HeptapodSpeechSwiftAdapters`.
+   - Runs segment-level Qwen3-ASR transcription through `speech-swift`.
 
-2. `MADLADTranslatorAdapter`
-   - Add local text translation behind `HeptapodTextTranslator`.
+2. `HeptapodMADLADTranslatorAdapter`
+   - Status: ready in `HeptapodSpeechSwiftAdapters`.
+   - Adds local text translation behind `HeptapodTextTranslator`.
    - Measure quality by language pair.
 
-3. `KokoroTTSAdapter`
-   - Add a small TTS option for the first local voice output.
+3. `HeptapodKokoroTTSAdapter`
+   - Status: ready in `HeptapodSpeechSwiftAdapters`.
+   - Adds a small TTS option for the first local voice output.
    - Keep this as the smallest installed footprint target.
 
-4. `Qwen3TTSAdapter`
+4. `HeptapodSileroVADAdapter`
+   - Status: ready in `HeptapodSpeechSwiftAdapters`.
+   - Adds real local speech/silence gating for the starter pipeline.
+   - Keep file-based smoke tests runnable without VAD.
+
+5. `Qwen3TTSAdapter`
    - Add higher-quality speech output.
    - Measure first-audio latency and memory pressure.
 
-5. `WhisperKitASRAdapter`
+6. `WhisperKitASRAdapter`
    - Add streaming ASR and word timestamps.
    - Compare against Qwen3 ASR for latency and quality.
 
-6. `NLLBTranslatorAdapter`
+7. `NLLBTranslatorAdapter`
    - Add a translation quality alternative.
    - Decide whether conversion/runtime cost is acceptable.
 
-7. `SeamlessM4TExperimentAdapter`
+8. `SeamlessM4TExperimentAdapter`
    - Keep as research-only until packaging and latency are proven.
 
 ## Heptapod Integration Plan
@@ -286,8 +373,8 @@ That can be added later, but the first version should prioritize correctness and
 ## Integration Plan
 
 1. Keep this package independent from Heptapod UI.
-2. Implement adapters one at a time, starting with existing Qwen3 ASR.
-3. Add model download/cache management per adapter.
+2. Add microphone/audio-queue edges for live local mode.
+3. Add richer model download/cache status reporting per adapter.
 4. Add a Heptapod settings screen for local engine model selection.
 5. Add benchmark logging: latency, disk size, memory pressure, and translation quality notes.
 
@@ -300,8 +387,14 @@ This package currently contains:
 - Pipeline readiness reporting for UI/integration checks.
 - Protocols for VAD, ASR, text translation, TTS, and direct S2ST.
 - A speech-to-speech pipeline actor.
+- A live speech session that schedules audio chunks, emits segment events, skips silence, and optionally plays synthesized audio through a sink.
 - Detailed pipeline results that expose transcript, translated text, and synthesized speech.
 - Unavailable placeholder adapters for not-yet-integrated models.
 - A placeholder adapter factory that can build the selected pipeline shape before real inference adapters exist.
+- `HeptapodSpeechSwiftAdapters`, which provides runnable Silero VAD, Qwen3-ASR, MADLAD-400, Kokoro, AVAudio microphone, and AVAudio playback adapters.
+- A real file-based speech-to-speech smoke test executable and recorded experiment result.
 
-It does not yet run inference. Runtime adapters should be added behind the protocols without changing the public pipeline API.
+It runs file-based local inference through the speech-swift adapter target and
+has a microphone-backed live demo path. The remaining production gap is app
+integration polish: permissions UX, background audio behavior, user-facing model
+cache status, and production playback scheduling.
