@@ -46,7 +46,8 @@ struct HeptapodLiveSpeechDemo {
                     outputDirectory: options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
                     endpointing: options.endpointingConfiguration,
-                    usesSentenceBuffering: options.usesSentenceBuffering
+                    usesSentenceBuffering: options.usesSentenceBuffering,
+                    tracePath: options.tracePath
                 )
             } else if options.usesMicrophone {
                 try await runMicrophoneDemo(
@@ -57,7 +58,8 @@ struct HeptapodLiveSpeechDemo {
                     outputDirectory: options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
                     endpointing: options.endpointingConfiguration,
-                    usesSentenceBuffering: options.usesSentenceBuffering
+                    usesSentenceBuffering: options.usesSentenceBuffering,
+                    tracePath: options.tracePath
                 )
             } else if options.usesSystemAudio {
                 try await runSystemAudioDemo(
@@ -68,7 +70,8 @@ struct HeptapodLiveSpeechDemo {
                     outputDirectory: options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
                     endpointing: options.endpointingConfiguration,
-                    usesSentenceBuffering: options.usesSentenceBuffering
+                    usesSentenceBuffering: options.usesSentenceBuffering,
+                    tracePath: options.tracePath
                 )
             } else if options.isInteractive {
                 try await runInteractiveDemo(
@@ -126,6 +129,7 @@ struct HeptapodLiveSpeechDemo {
         ASR stabilization: \(options.usesASRStabilization ? "sliding window stable-prefix" : "off")
         Latency preset: \(options.latencyPreset.rawValue)
         Chunk duration: \(String(format: "%.2f", options.chunkDurationSeconds))s
+        Low-latency flush: \(options.maximumBufferedSegments) buffered ASR segment(s)
 
         """)
     }
@@ -168,6 +172,7 @@ struct HeptapodLiveSpeechDemo {
           --chunk-translation
                               Translate every audio chunk instead of waiting for sentence/pause endpointing.
           --output-dir <path> Write synthesized live segments as WAV files.
+          --trace <path>      Write JSON-lines event timestamps for latency comparison.
           --speak             Preview mode only: speak translated text with /usr/bin/say.
           --play-output       Real live mode: play synthesized speech with AVAudioEngine.
           --cache-status      Print starter model cache paths and cached sizes.
@@ -232,7 +237,8 @@ struct HeptapodLiveSpeechDemo {
         outputDirectory: String?,
         chunkDurationSeconds: Double,
         endpointing: HeptapodSentenceEndpointingConfiguration,
-        usesSentenceBuffering: Bool
+        usesSentenceBuffering: Bool,
+        tracePath: String?
     ) async throws {
         print("Listening. Stop with Ctrl+C\(durationSeconds.map { " or wait \($0)s" } ?? "").\n")
         let source = HeptapodAVAudioMicrophoneSource(
@@ -247,6 +253,7 @@ struct HeptapodLiveSpeechDemo {
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
             endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
+            tracePath: tracePath,
             shouldSpeak: false
         )
         try await printWrittenFiles(fileSink)
@@ -260,7 +267,8 @@ struct HeptapodLiveSpeechDemo {
         outputDirectory: String?,
         chunkDurationSeconds: Double,
         endpointing: HeptapodSentenceEndpointingConfiguration,
-        usesSentenceBuffering: Bool
+        usesSentenceBuffering: Bool,
+        tracePath: String?
     ) async throws {
         #if os(macOS)
         print("""
@@ -280,6 +288,7 @@ struct HeptapodLiveSpeechDemo {
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
             endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
+            tracePath: tracePath,
             shouldSpeak: false
         )
         try await printWrittenFiles(fileSink)
@@ -296,7 +305,8 @@ struct HeptapodLiveSpeechDemo {
         outputDirectory: String?,
         chunkDurationSeconds: Double,
         endpointing: HeptapodSentenceEndpointingConfiguration,
-        usesSentenceBuffering: Bool
+        usesSentenceBuffering: Bool,
+        tracePath: String?
     ) async throws {
         let source = HeptapodAudioFileChunkSource(
             url: URL(fileURLWithPath: audioPath),
@@ -310,6 +320,7 @@ struct HeptapodLiveSpeechDemo {
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
             endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
+            tracePath: tracePath,
             shouldSpeak: false
         )
         try await printWrittenFiles(fileSink)
@@ -354,6 +365,7 @@ struct HeptapodLiveSpeechDemo {
         playbackSink: (any HeptapodSpeechPlaybackSink)? = nil,
         endpointing: HeptapodSentenceEndpointingConfiguration = HeptapodSentenceEndpointingConfiguration(),
         usesSentenceBuffering: Bool = false,
+        tracePath: String? = nil,
         shouldSpeak: Bool
     ) async throws {
         let session = HeptapodLiveSpeechSession(
@@ -366,21 +378,58 @@ struct HeptapodLiveSpeechDemo {
             ? await session.runSentenceBuffered(chunks: chunks, endpointing: endpointing)
             : await session.run(chunks: chunks)
 
+        var segmentStartTimes: [Int: Date] = [:]
+        var resultTimes: [Int: Date] = [:]
+        let trace = try tracePath.map { try LiveTraceRecorder(path: $0) }
+        try trace?.record(
+            event: "run_started",
+            targetLanguageCode: targetLanguageCode,
+            usesSentenceBuffering: usesSentenceBuffering
+        )
+
         for try await event in events {
             switch event {
             case .segmentStarted(let index):
+                segmentStartTimes[index] = Date()
                 print("Segment \(index)")
-            case .silenceSkipped:
+                try trace?.record(event: "segment_started", index: index)
+            case .silenceSkipped(let index):
                 print("  VAD: silence, skipped")
-            case .result(_, let result):
+                try trace?.record(event: "silence_skipped", index: index)
+            case .result(let index, let result):
                 printResult(result)
+                let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
+                if let startedAt = segmentStartTimes[index] {
+                    print("  Timing: result ready +\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
+                }
+                resultTimes[index] = Date()
+                try trace?.record(
+                    event: "result_ready",
+                    index: index,
+                    transcriptText: result.transcript.text,
+                    translationText: result.translation.translatedText,
+                    speechBytes: result.speech.pcm16.count,
+                    sampleRate: result.speech.sampleRate,
+                    resultLatencySeconds: resultLatencySeconds
+                )
                 if shouldSpeak {
                     speak(result.translation.translatedText)
                 }
-            case .playbackCompleted:
-                print("  Playback: completed")
+            case .playbackCompleted(let index):
+                let playbackLatencySeconds = resultTimes[index].map { Date().timeIntervalSince($0) }
+                if let resultAt = resultTimes[index] {
+                    print("  Playback: completed +\(String(format: "%.2f", Date().timeIntervalSince(resultAt)))s after result")
+                } else {
+                    print("  Playback: completed")
+                }
+                try trace?.record(
+                    event: "playback_completed",
+                    index: index,
+                    playbackLatencySeconds: playbackLatencySeconds
+                )
             }
         }
+        try trace?.record(event: "run_finished")
     }
 
     private static func printResult(_ result: HeptapodSpeechToSpeechResult) {
@@ -424,6 +473,7 @@ private struct DemoOptions {
     let durationSeconds: Double?
     let audioPath: String?
     let outputDirectory: String?
+    let tracePath: String?
 
     init(arguments: [String]) throws {
         var isInteractive = false
@@ -450,6 +500,7 @@ private struct DemoOptions {
         var durationSeconds: Double?
         var audioPath: String?
         var outputDirectory: String?
+        var tracePath: String?
 
         var index = 0
         while index < arguments.count {
@@ -521,6 +572,8 @@ private struct DemoOptions {
                 usesChatterboxPersistentWorker = false
             case "--output-dir":
                 outputDirectory = try Self.value(after: argument, in: arguments, at: &index)
+            case "--trace":
+                tracePath = try Self.value(after: argument, in: arguments, at: &index)
             case "--duration":
                 let rawValue = try Self.value(after: argument, in: arguments, at: &index)
                 guard let value = Double(rawValue), value > 0 else {
@@ -559,6 +612,7 @@ private struct DemoOptions {
         self.durationSeconds = durationSeconds
         self.audioPath = audioPath
         self.outputDirectory = outputDirectory
+        self.tracePath = tracePath
     }
 
     private static func value(after option: String, in arguments: [String], at index: inout Int) throws -> String {
@@ -635,7 +689,7 @@ private enum DemoLatencyPreset: String {
     var chunkDurationSeconds: Double {
         switch self {
         case .low:
-            1.0
+            0.75
         case .balanced:
             1.0
         case .quality:
@@ -646,9 +700,9 @@ private enum DemoLatencyPreset: String {
     var maximumBufferedSegments: Int {
         switch self {
         case .low:
-            3
+            1
         case .balanced:
-            5
+            3
         case .quality:
             8
         }
@@ -666,7 +720,7 @@ private enum DemoLatencyPreset: String {
     var minimumWordsForPunctuationEndpoint: Int {
         switch self {
         case .low:
-            4
+            2
         case .balanced:
             6
         case .quality:
@@ -689,18 +743,89 @@ private enum DemoLatencyPreset: String {
             HeptapodASRStabilizationConfiguration(
                 isEnabled: true,
                 maximumWindowChunks: 3,
-                minimumStableWords: 2
+                minimumStableWords: 1
             )
         case .balanced:
             HeptapodASRStabilizationConfiguration(
                 isEnabled: true,
                 maximumWindowChunks: 4,
-                minimumStableWords: 3
+                minimumStableWords: 2
             )
         case .quality:
             .disabled
         }
     }
+}
+
+private final class LiveTraceRecorder {
+    private let handle: FileHandle
+    private let startedAt = Date()
+    private let encoder = JSONEncoder()
+    private let dateFormatter = ISO8601DateFormatter()
+
+    init(path: String) throws {
+        let url = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        handle = try FileHandle(forWritingTo: url)
+        encoder.outputFormatting = [.sortedKeys]
+    }
+
+    deinit {
+        try? handle.close()
+    }
+
+    func record(
+        event: String,
+        index: Int? = nil,
+        targetLanguageCode: String? = nil,
+        usesSentenceBuffering: Bool? = nil,
+        transcriptText: String? = nil,
+        translationText: String? = nil,
+        speechBytes: Int? = nil,
+        sampleRate: Int? = nil,
+        resultLatencySeconds: TimeInterval? = nil,
+        playbackLatencySeconds: TimeInterval? = nil
+    ) throws {
+        let now = Date()
+        let traceEvent = LiveTraceEvent(
+            event: event,
+            timestamp: dateFormatter.string(from: now),
+            elapsedSeconds: now.timeIntervalSince(startedAt),
+            index: index,
+            targetLanguageCode: targetLanguageCode,
+            usesSentenceBuffering: usesSentenceBuffering,
+            transcriptText: transcriptText,
+            translationText: translationText,
+            speechBytes: speechBytes,
+            sampleRate: sampleRate,
+            resultLatencySeconds: resultLatencySeconds,
+            playbackLatencySeconds: playbackLatencySeconds,
+            command: CommandLine.arguments
+        )
+        var data = try encoder.encode(traceEvent)
+        data.append(0x0A)
+        handle.write(data)
+    }
+}
+
+private struct LiveTraceEvent: Encodable {
+    let event: String
+    let timestamp: String
+    let elapsedSeconds: TimeInterval
+    let index: Int?
+    let targetLanguageCode: String?
+    let usesSentenceBuffering: Bool?
+    let transcriptText: String?
+    let translationText: String?
+    let speechBytes: Int?
+    let sampleRate: Int?
+    let resultLatencySeconds: TimeInterval?
+    let playbackLatencySeconds: TimeInterval?
+    let command: [String]
 }
 
 private struct CompositePlaybackSink: HeptapodSpeechPlaybackSink {

@@ -179,15 +179,15 @@ swift run HeptapodLiveSpeechDemo -- \
   --system-audio \
   --to tr \
   --latency low \
-  --max-buffered-segments 3 \
+  --trace /tmp/heptapod-low.jsonl \
   --punctuation-endpoint \
   --play-output
 ```
 
 `--latency low` is the default for live demos. It favors earlier translation
-with shorter sentence buffers while keeping 1 second capture chunks, which is
-more stable for the current Qwen ASR adapter. You can still try
-`--chunk-duration 0.5`, but short chunks may hurt recognition quality. Use
+with 0.75 second capture chunks, one-word stable-prefix ASR commits, and a
+single buffered ASR segment before flushing to translation/TTS. This is
+intentionally more aggressive and may sound more phrase-by-phrase. Use
 `--latency balanced` or `--latency quality` when translation quality matters
 more than delay.
 
@@ -197,6 +197,11 @@ queue and immediately keeps consuming audio. The synthesis queue prepares
 translation plus TTS audio in order, then hands ready audio to a separate serial
 playback queue. This lets the next segment transcribe while the previous segment
 is translating, synthesizing, or playing.
+
+Use `--trace /tmp/heptapod-run.jsonl` to write JSON-lines timestamps for later
+performance comparison. The trace records run start/finish, segment starts,
+result-ready latency, playback completion latency, transcript text, translation
+text, generated audio byte count, and the command used for the run.
 
 More natural Chatterbox TTS output:
 

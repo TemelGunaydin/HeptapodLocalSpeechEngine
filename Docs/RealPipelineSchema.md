@@ -129,6 +129,8 @@ The demo exposes `--latency low|balanced|quality`, `--chunk-duration`,
 `--max-buffered-segments`, `--punctuation-endpoint`, and
 `--no-asr-stabilization` so the cascaded local pipeline can move along the
 speed/quality tradeoff without changing code.
+`--trace <path>` writes JSON-lines event timestamps so runs can be compared
+afterward without screen scraping terminal output.
 
 Current low-latency mode is still cascaded:
 
@@ -145,6 +147,10 @@ The Qwen ASR adapter remains chunk-based, but the live session now wraps it in a
 ring-buffer/sliding-window policy. It decodes recent audio context, compares
 neighboring hypotheses, commits only stable prefix deltas downstream, and flushes
 the latest uncommitted hypothesis on a silence endpoint.
+The low-latency preset is intentionally aggressive: 0.75 second capture chunks,
+one stable-prefix word, and one buffered ASR segment before translation/TTS
+flush. Balanced and quality presets keep larger buffers for more natural
+translation.
 
 The synthesis queue and playback queue are serial and nonblocking for the input
 loop. This gives the pipeline a backbuffer-like shape: later segments can be
