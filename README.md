@@ -184,6 +184,12 @@ stable for the current chunk-based Qwen ASR adapter. You can still try
 true streaming ASR backend lands. Use `--latency balanced` or
 `--latency quality` when translation quality matters more than delay.
 
+Playback is queued like a small backbuffer: after a segment is translated and TTS
+audio is generated, it enters a serial playback queue. The live input loop keeps
+transcribing and preparing the next segment while the previous translated audio
+is still playing, then the queued audio starts as soon as the output device is
+free.
+
 More natural Chatterbox TTS output:
 
 ```bash

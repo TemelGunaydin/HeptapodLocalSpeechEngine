@@ -219,6 +219,56 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
 }
 
 @Test
+func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let playbackSink = DelayedPlaybackSink(delay: .milliseconds(200))
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        playbackSink: playbackSink
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("first".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("second".utf8), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await session.run(chunks: source.chunks())
+    var eventNames: [String] = []
+
+    for try await event in events {
+        switch event {
+        case .segmentStarted(let index):
+            eventNames.append("segment-\(index)")
+        case .result(let index, _):
+            eventNames.append("result-\(index)")
+        case .playbackCompleted(let index):
+            eventNames.append("playback-\(index)")
+        case .silenceSkipped:
+            break
+        }
+    }
+
+    #expect(eventNames.firstIndex(of: "result-2")! < eventNames.firstIndex(of: "playback-1")!)
+    #expect(eventNames.suffix(2) == ["playback-1", "playback-2"])
+    #expect(await playbackSink.playedCount() == 2)
+}
+
+@Test
 func sentenceBufferedLiveSessionFlushesOneResultAfterSilence() async throws {
     let configuration = HeptapodPipelineConfiguration(
         speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
@@ -378,6 +428,24 @@ private actor RecordingPlaybackSink: HeptapodSpeechPlaybackSink {
     private var playedSpeech: [HeptapodSynthesizedSpeech] = []
 
     func play(_ speech: HeptapodSynthesizedSpeech) async throws {
+        playedSpeech.append(speech)
+    }
+
+    func playedCount() -> Int {
+        playedSpeech.count
+    }
+}
+
+private actor DelayedPlaybackSink: HeptapodSpeechPlaybackSink {
+    private let delay: Duration
+    private var playedSpeech: [HeptapodSynthesizedSpeech] = []
+
+    init(delay: Duration) {
+        self.delay = delay
+    }
+
+    func play(_ speech: HeptapodSynthesizedSpeech) async throws {
+        try await Task.sleep(for: delay)
         playedSpeech.append(speech)
     }
 

@@ -132,12 +132,14 @@ pipeline can move along the speed/quality tradeoff without changing code.
 Current low-latency mode is still cascaded:
 
 ```text
-audio chunks -> VAD -> chunk ASR -> sentence buffer -> MT -> TTS
+audio chunks -> VAD -> chunk ASR -> sentence buffer -> MT -> TTS -> playback queue
 ```
 
-The next OpenAI-like step is replacing chunk ASR with streaming ASR plus stable
-prefix detection, then streaming or queued TTS deltas instead of whole-segment
-WAV output.
+The playback queue is serial and nonblocking for the input loop. This gives the
+pipeline a backbuffer-like shape: translated/TTS audio for later segments can be
+prepared while an earlier segment is still playing. The next OpenAI-like step is
+replacing chunk ASR with streaming ASR plus stable prefix detection, then
+streaming TTS deltas instead of whole-segment WAV output.
 
 The remaining work is app-level polish: permission UX, background audio
 behavior, streaming partial-ASR improvements, and production playback

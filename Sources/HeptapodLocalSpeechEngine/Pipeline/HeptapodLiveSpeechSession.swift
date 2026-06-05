@@ -68,6 +68,7 @@ public actor HeptapodLiveSpeechSession {
         let playbackSink = playbackSink
 
         return AsyncThrowingStream { continuation in
+            let playbackQueue = LivePlaybackQueue(sink: playbackSink, continuation: continuation)
             let task = Task {
                 do {
                     var index = 0
@@ -86,13 +87,10 @@ public actor HeptapodLiveSpeechSession {
                         }
 
                         continuation.yield(.result(index: index, result))
-
-                        if let playbackSink {
-                            try await playbackSink.play(result.speech)
-                            continuation.yield(.playbackCompleted(index: index))
-                        }
+                        await playbackQueue.enqueue(index: index, speech: result.speech)
                     }
 
+                    try await playbackQueue.drain()
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -101,6 +99,9 @@ public actor HeptapodLiveSpeechSession {
 
             continuation.onTermination = { _ in
                 task.cancel()
+                Task {
+                    await playbackQueue.cancel()
+                }
             }
         }
     }
@@ -116,6 +117,7 @@ public actor HeptapodLiveSpeechSession {
         let playbackSink = playbackSink
 
         return AsyncThrowingStream { continuation in
+            let playbackQueue = LivePlaybackQueue(sink: playbackSink, continuation: continuation)
             let task = Task {
                 do {
                     var index = 0
@@ -137,7 +139,7 @@ public actor HeptapodLiveSpeechSession {
                                     sourceLanguageCode: sourceLanguageCode,
                                     targetLanguageCode: targetLanguageCode,
                                     voiceID: voiceID,
-                                    playbackSink: playbackSink,
+                                    playbackQueue: playbackQueue,
                                     continuation: continuation
                                 )
                             } else {
@@ -156,7 +158,7 @@ public actor HeptapodLiveSpeechSession {
                                 sourceLanguageCode: sourceLanguageCode,
                                 targetLanguageCode: targetLanguageCode,
                                 voiceID: voiceID,
-                                playbackSink: playbackSink,
+                                playbackQueue: playbackQueue,
                                 continuation: continuation
                             )
                         }
@@ -170,11 +172,12 @@ public actor HeptapodLiveSpeechSession {
                             sourceLanguageCode: sourceLanguageCode,
                             targetLanguageCode: targetLanguageCode,
                             voiceID: voiceID,
-                            playbackSink: playbackSink,
+                            playbackQueue: playbackQueue,
                             continuation: continuation
                         )
                     }
 
+                    try await playbackQueue.drain()
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -183,6 +186,9 @@ public actor HeptapodLiveSpeechSession {
 
             continuation.onTermination = { _ in
                 task.cancel()
+                Task {
+                    await playbackQueue.cancel()
+                }
             }
         }
     }
@@ -261,7 +267,7 @@ private func flushPending(
     sourceLanguageCode: String?,
     targetLanguageCode: String,
     voiceID: String?,
-    playbackSink: (any HeptapodSpeechPlaybackSink)?,
+    playbackQueue: LivePlaybackQueue,
     continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
 ) async throws {
     let transcript = pending.drainTranscript(fallbackLanguageCode: sourceLanguageCode)
@@ -273,10 +279,42 @@ private func flushPending(
     )
 
     continuation.yield(.result(index: index, result))
+    await playbackQueue.enqueue(index: index, speech: result.speech)
+}
 
-    if let playbackSink {
-        try await playbackSink.play(result.speech)
-        continuation.yield(.playbackCompleted(index: index))
+private actor LivePlaybackQueue {
+    private let sink: (any HeptapodSpeechPlaybackSink)?
+    private let continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
+    private var tail: Task<Void, Error>?
+
+    init(
+        sink: (any HeptapodSpeechPlaybackSink)?,
+        continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
+    ) {
+        self.sink = sink
+        self.continuation = continuation
+    }
+
+    func enqueue(index: Int, speech: HeptapodSynthesizedSpeech) {
+        guard let sink else {
+            return
+        }
+
+        let previous = tail
+        tail = Task {
+            try await previous?.value
+            try Task.checkCancellation()
+            try await sink.play(speech)
+            continuation.yield(.playbackCompleted(index: index))
+        }
+    }
+
+    func drain() async throws {
+        try await tail?.value
+    }
+
+    func cancel() {
+        tail?.cancel()
     }
 }
 

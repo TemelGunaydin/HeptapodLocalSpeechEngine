@@ -68,7 +68,8 @@ The live session owns:
 - emitting segment lifecycle events,
 - skipping silent chunks,
 - calling the speech-to-speech pipeline,
-- sending synthesized audio to an optional playback sink.
+- queueing synthesized audio into a serial playback backbuffer,
+- keeping input/ASR work moving while previous translated audio is still playing.
 
 The UI owns:
 
