@@ -131,6 +131,9 @@ The demo exposes `--latency low|balanced|quality`, `--chunk-duration`,
 speed/quality tradeoff without changing code.
 `--trace <path>` writes JSON-lines event timestamps so runs can be compared
 afterward without screen scraping terminal output.
+`--text-only` skips TTS model preparation, synthesis, playback, and WAV output.
+That mode is currently the recommended low-latency local test path when the
+available offline voices are not natural enough.
 
 Current low-latency mode is still cascaded:
 
@@ -139,8 +142,8 @@ audio chunks
   -> VAD
   -> sliding ASR window / stable prefix delta
   -> sentence buffer
-  -> synthesis queue (MT + TTS)
-  -> playback queue
+  -> translation queue
+  -> optional TTS/playback queue
 ```
 
 The Qwen ASR adapter remains chunk-based, but the live session now wraps it in a

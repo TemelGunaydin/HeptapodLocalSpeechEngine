@@ -205,6 +205,8 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
         case .result(let index, let result):
             resultIndexes.append(index)
             translations.append(result.translation.translatedText)
+        case .translation:
+            break
         case .playbackCompleted(let index):
             playbackIndexes.append(index)
         }
@@ -256,6 +258,8 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
             eventNames.append("segment-\(index)")
         case .result(let index, _):
             eventNames.append("result-\(index)")
+        case .translation:
+            break
         case .playbackCompleted(let index):
             eventNames.append("playback-\(index)")
         case .silenceSkipped:
@@ -266,6 +270,55 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
     #expect(eventNames.firstIndex(of: "result-2")! < eventNames.firstIndex(of: "playback-1")!)
     #expect(eventNames.suffix(2) == ["playback-1", "playback-2"])
     #expect(await playbackSink.playedCount() == 2)
+}
+
+@Test
+func liveSessionTextOnlyTranslatesWithoutSynthesisOrPlayback() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: FailingSynthesizer()
+    )
+    let playbackSink = RecordingPlaybackSink()
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        playbackSink: playbackSink,
+        outputMode: .textOnly
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("first phrase".utf8), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await session.run(chunks: source.chunks())
+    var translations: [String] = []
+    var playbackIndexes: [Int] = []
+
+    for try await event in events {
+        switch event {
+        case .translation(_, let result):
+            translations.append(result.translation.translatedText)
+        case .playbackCompleted(let index):
+            playbackIndexes.append(index)
+        case .segmentStarted, .silenceSkipped, .result:
+            break
+        }
+    }
+
+    #expect(translations == ["first phrase"])
+    #expect(playbackIndexes.isEmpty)
+    #expect(await playbackSink.playedCount() == 0)
 }
 
 @Test
@@ -306,6 +359,8 @@ func sentenceBufferedLiveSessionFlushesOneResultAfterSilence() async throws {
         switch event {
         case .result(_, let result):
             resultTexts.append(result.transcript.text)
+        case .translation:
+            break
         case .playbackCompleted(let index):
             playbackIndexes.append(index)
         default:
@@ -400,6 +455,8 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
             eventNames.append("segment-\(index)")
         case .result(let index, _):
             eventNames.append("result-\(index)")
+        case .translation:
+            break
         case .silenceSkipped, .playbackCompleted:
             break
         }
@@ -644,5 +701,19 @@ private struct DelayedSynthesizer: HeptapodSpeechSynthesizer {
     ) async throws -> HeptapodSynthesizedSpeech {
         try await Task.sleep(for: delay)
         return HeptapodSynthesizedSpeech(pcm16: Data([9, 9]), sampleRate: 16_000, languageCode: languageCode)
+    }
+}
+
+private struct FailingSynthesizer: HeptapodSpeechSynthesizer {
+    let descriptor = HeptapodModelDescriptor.kokoroTTS
+
+    func prepare() async throws {}
+
+    func synthesize(
+        _ text: String,
+        languageCode: String,
+        voiceID: String?
+    ) async throws -> HeptapodSynthesizedSpeech {
+        throw HeptapodEngineError.adapterNotImplemented("text-only test should not synthesize")
     }
 }

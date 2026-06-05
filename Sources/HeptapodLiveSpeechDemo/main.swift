@@ -34,7 +34,7 @@ struct HeptapodLiveSpeechDemo {
             let targetLanguageCode = options.targetLanguageCode ?? (options.usesRealModels ? "es" : "tr")
             let pipeline = try makePipeline(options: options)
 
-            try await pipeline.prepare()
+            try await pipeline.prepare(includeSynthesis: options.usesTextOnly == false)
             printHeader(options: options, targetLanguageCode: targetLanguageCode)
 
             if let audioPath = options.audioPath {
@@ -42,36 +42,39 @@ struct HeptapodLiveSpeechDemo {
                     pipeline: pipeline,
                     audioPath: audioPath,
                     targetLanguageCode: targetLanguageCode,
-                    shouldPlayOutput: options.shouldPlayOutput,
-                    outputDirectory: options.outputDirectory,
+                    shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
+                    outputDirectory: options.usesTextOnly ? nil : options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
                     endpointing: options.endpointingConfiguration,
                     usesSentenceBuffering: options.usesSentenceBuffering,
-                    tracePath: options.tracePath
+                    tracePath: options.tracePath,
+                    outputMode: options.liveOutputMode
                 )
             } else if options.usesMicrophone {
                 try await runMicrophoneDemo(
                     pipeline: pipeline,
                     targetLanguageCode: targetLanguageCode,
                     durationSeconds: options.durationSeconds,
-                    shouldPlayOutput: options.shouldPlayOutput,
-                    outputDirectory: options.outputDirectory,
+                    shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
+                    outputDirectory: options.usesTextOnly ? nil : options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
                     endpointing: options.endpointingConfiguration,
                     usesSentenceBuffering: options.usesSentenceBuffering,
-                    tracePath: options.tracePath
+                    tracePath: options.tracePath,
+                    outputMode: options.liveOutputMode
                 )
             } else if options.usesSystemAudio {
                 try await runSystemAudioDemo(
                     pipeline: pipeline,
                     targetLanguageCode: targetLanguageCode,
                     durationSeconds: options.durationSeconds,
-                    shouldPlayOutput: options.shouldPlayOutput,
-                    outputDirectory: options.outputDirectory,
+                    shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
+                    outputDirectory: options.usesTextOnly ? nil : options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
                     endpointing: options.endpointingConfiguration,
                     usesSentenceBuffering: options.usesSentenceBuffering,
-                    tracePath: options.tracePath
+                    tracePath: options.tracePath,
+                    outputMode: options.liveOutputMode
                 )
             } else if options.isInteractive {
                 try await runInteractiveDemo(
@@ -120,11 +123,11 @@ struct HeptapodLiveSpeechDemo {
         Mode: \(options.usesRealModels ? "real speech-swift adapters" : "preview adapters")
         ASR:  \(HeptapodModelDescriptor.qwenASRCompact.displayName)
         MT:   \(HeptapodModelDescriptor.madladTranslator.displayName)
-        TTS:  \(options.ttsDescriptor.displayName)
-        Flow: audio chunk source -> live session -> VAD -> ASR -> MT -> TTS -> playback sink
+        TTS:  \(options.usesTextOnly ? "off" : options.ttsDescriptor.displayName)
+        Flow: \(options.usesTextOnly ? "audio chunk source -> live session -> VAD -> ASR -> MT" : "audio chunk source -> live session -> VAD -> ASR -> MT -> TTS -> playback sink")
         Source: \(options.sourceDescription)
         Target: \(targetLanguageCode)
-        Speak: \(options.shouldSpeak || options.shouldPlayOutput ? "on" : "off")
+        Speak: \(options.usesTextOnly ? "off" : (options.shouldSpeak || options.shouldPlayOutput ? "on" : "off"))
         Translation timing: \(options.usesSentenceBuffering ? "sentence/pause buffered" : "every chunk")
         ASR stabilization: \(options.usesASRStabilization ? "sliding window stable-prefix" : "off")
         Latency preset: \(options.latencyPreset.rawValue)
@@ -171,6 +174,7 @@ struct HeptapodLiveSpeechDemo {
           --tts-one-shot      Run a new Chatterbox Python process for each segment.
           --chunk-translation
                               Translate every audio chunk instead of waiting for sentence/pause endpointing.
+          --text-only         Skip TTS and playback; print/trace translated text only.
           --output-dir <path> Write synthesized live segments as WAV files.
           --trace <path>      Write JSON-lines event timestamps for latency comparison.
           --speak             Preview mode only: speak translated text with /usr/bin/say.
@@ -238,7 +242,8 @@ struct HeptapodLiveSpeechDemo {
         chunkDurationSeconds: Double,
         endpointing: HeptapodSentenceEndpointingConfiguration,
         usesSentenceBuffering: Bool,
-        tracePath: String?
+        tracePath: String?,
+        outputMode: HeptapodLiveOutputMode
     ) async throws {
         print("Listening. Stop with Ctrl+C\(durationSeconds.map { " or wait \($0)s" } ?? "").\n")
         let source = HeptapodAVAudioMicrophoneSource(
@@ -254,6 +259,7 @@ struct HeptapodLiveSpeechDemo {
             endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
             tracePath: tracePath,
+            outputMode: outputMode,
             shouldSpeak: false
         )
         try await printWrittenFiles(fileSink)
@@ -268,7 +274,8 @@ struct HeptapodLiveSpeechDemo {
         chunkDurationSeconds: Double,
         endpointing: HeptapodSentenceEndpointingConfiguration,
         usesSentenceBuffering: Bool,
-        tracePath: String?
+        tracePath: String?,
+        outputMode: HeptapodLiveOutputMode
     ) async throws {
         #if os(macOS)
         print("""
@@ -289,6 +296,7 @@ struct HeptapodLiveSpeechDemo {
             endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
             tracePath: tracePath,
+            outputMode: outputMode,
             shouldSpeak: false
         )
         try await printWrittenFiles(fileSink)
@@ -306,7 +314,8 @@ struct HeptapodLiveSpeechDemo {
         chunkDurationSeconds: Double,
         endpointing: HeptapodSentenceEndpointingConfiguration,
         usesSentenceBuffering: Bool,
-        tracePath: String?
+        tracePath: String?,
+        outputMode: HeptapodLiveOutputMode
     ) async throws {
         let source = HeptapodAudioFileChunkSource(
             url: URL(fileURLWithPath: audioPath),
@@ -321,6 +330,7 @@ struct HeptapodLiveSpeechDemo {
             endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
             tracePath: tracePath,
+            outputMode: outputMode,
             shouldSpeak: false
         )
         try await printWrittenFiles(fileSink)
@@ -366,13 +376,15 @@ struct HeptapodLiveSpeechDemo {
         endpointing: HeptapodSentenceEndpointingConfiguration = HeptapodSentenceEndpointingConfiguration(),
         usesSentenceBuffering: Bool = false,
         tracePath: String? = nil,
+        outputMode: HeptapodLiveOutputMode = .speech,
         shouldSpeak: Bool
     ) async throws {
         let session = HeptapodLiveSpeechSession(
             pipeline: pipeline,
             sourceLanguageCode: "en",
             targetLanguageCode: targetLanguageCode,
-            playbackSink: playbackSink
+            playbackSink: playbackSink,
+            outputMode: outputMode
         )
         let events = usesSentenceBuffering
             ? await session.runSentenceBuffered(chunks: chunks, endpointing: endpointing)
@@ -415,6 +427,19 @@ struct HeptapodLiveSpeechDemo {
                 if shouldSpeak {
                     speak(result.translation.translatedText)
                 }
+            case .translation(let index, let result):
+                printTranslationResult(result)
+                let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
+                if let startedAt = segmentStartTimes[index] {
+                    print("  Timing: translation ready +\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
+                }
+                try trace?.record(
+                    event: "translation_ready",
+                    index: index,
+                    transcriptText: result.transcript.text,
+                    translationText: result.translation.translatedText,
+                    resultLatencySeconds: resultLatencySeconds
+                )
             case .playbackCompleted(let index):
                 let playbackLatencySeconds = resultTimes[index].map { Date().timeIntervalSince($0) }
                 if let resultAt = resultTimes[index] {
@@ -439,6 +464,12 @@ struct HeptapodLiveSpeechDemo {
         print("  TTS: \(result.speech.pcm16.count) PCM bytes at \(result.speech.sampleRate) Hz")
     }
 
+    private static func printTranslationResult(_ result: HeptapodLiveTranslationResult) {
+        print("  VAD: speech")
+        print("  ASR: \(result.transcript.text)")
+        print("  MT:  \(result.translation.translatedText)")
+    }
+
     private static func speak(_ text: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
@@ -457,6 +488,7 @@ private struct DemoOptions {
     let shouldPlayOutput: Bool
     let shouldPrintHelp: Bool
     let shouldPrintCacheStatus: Bool
+    let usesTextOnly: Bool
     let usesSentenceBuffering: Bool
     let latencyPreset: DemoLatencyPreset
     let chunkDurationSeconds: Double
@@ -484,6 +516,7 @@ private struct DemoOptions {
         var shouldPlayOutput = false
         var shouldPrintHelp = false
         var shouldPrintCacheStatus = false
+        var usesTextOnly = false
         var usesSentenceBuffering = true
         var latencyPreset = DemoLatencyPreset.low
         var chunkDurationSeconds: Double?
@@ -526,6 +559,8 @@ private struct DemoOptions {
                 shouldPrintCacheStatus = true
             case "--chunk-translation":
                 usesSentenceBuffering = false
+            case "--text-only":
+                usesTextOnly = true
             case "--latency":
                 let rawValue = try Self.value(after: argument, in: arguments, at: &index)
                 guard let preset = DemoLatencyPreset(rawValue: rawValue.lowercased()) else {
@@ -596,6 +631,7 @@ private struct DemoOptions {
         self.shouldPlayOutput = shouldPlayOutput
         self.shouldPrintHelp = shouldPrintHelp
         self.shouldPrintCacheStatus = shouldPrintCacheStatus
+        self.usesTextOnly = usesTextOnly
         self.usesSentenceBuffering = usesSentenceBuffering
         self.latencyPreset = latencyPreset
         self.chunkDurationSeconds = chunkDurationSeconds ?? latencyPreset.chunkDurationSeconds
@@ -651,6 +687,10 @@ private struct DemoOptions {
             speechSynthesisModelID: ttsDescriptor.id,
             voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
         )
+    }
+
+    var liveOutputMode: HeptapodLiveOutputMode {
+        usesTextOnly ? .textOnly : .speech
     }
 
     var endpointingConfiguration: HeptapodSentenceEndpointingConfiguration {

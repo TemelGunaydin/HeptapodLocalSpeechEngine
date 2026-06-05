@@ -179,9 +179,9 @@ swift run HeptapodLiveSpeechDemo -- \
   --system-audio \
   --to tr \
   --latency low \
+  --text-only \
   --trace /tmp/heptapod-low.jsonl \
   --punctuation-endpoint \
-  --play-output
 ```
 
 `--latency low` is the default for live demos. It favors earlier translation
@@ -198,10 +198,16 @@ translation plus TTS audio in order, then hands ready audio to a separate serial
 playback queue. This lets the next segment transcribe while the previous segment
 is translating, synthesizing, or playing.
 
+Use `--text-only` when local TTS quality is not useful. In this mode the demo
+prepares only VAD, ASR, and translation, skips TTS model load/inference entirely,
+prints translated text, and writes `translation_ready` trace events instead of
+audio playback events.
+
 Use `--trace /tmp/heptapod-run.jsonl` to write JSON-lines timestamps for later
 performance comparison. The trace records run start/finish, segment starts,
-result-ready latency, playback completion latency, transcript text, translation
-text, generated audio byte count, and the command used for the run.
+translation/result-ready latency, playback completion latency when speech output
+is enabled, transcript text, translation text, generated audio byte count, and
+the command used for the run.
 
 More natural Chatterbox TTS output:
 

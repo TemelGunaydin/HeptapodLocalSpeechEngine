@@ -11,8 +11,24 @@ public protocol HeptapodSpeechPlaybackSink: Sendable {
 public enum HeptapodLiveSpeechEvent: Sendable {
     case segmentStarted(index: Int)
     case silenceSkipped(index: Int)
+    case translation(index: Int, HeptapodLiveTranslationResult)
     case result(index: Int, HeptapodSpeechToSpeechResult)
     case playbackCompleted(index: Int)
+}
+
+public enum HeptapodLiveOutputMode: Sendable {
+    case speech
+    case textOnly
+}
+
+public struct HeptapodLiveTranslationResult: Sendable {
+    public let transcript: HeptapodTranscriptSegment
+    public let translation: HeptapodTranslatedText
+
+    public init(transcript: HeptapodTranscriptSegment, translation: HeptapodTranslatedText) {
+        self.transcript = transcript
+        self.translation = translation
+    }
 }
 
 public struct HeptapodSentenceEndpointingConfiguration: Sendable {
@@ -69,19 +85,22 @@ public actor HeptapodLiveSpeechSession {
     private let targetLanguageCode: String
     private let voiceID: String?
     private let playbackSink: (any HeptapodSpeechPlaybackSink)?
+    private let outputMode: HeptapodLiveOutputMode
 
     public init(
         pipeline: HeptapodSpeechToSpeechPipeline,
         sourceLanguageCode: String?,
         targetLanguageCode: String,
         voiceID: String? = nil,
-        playbackSink: (any HeptapodSpeechPlaybackSink)? = nil
+        playbackSink: (any HeptapodSpeechPlaybackSink)? = nil,
+        outputMode: HeptapodLiveOutputMode = .speech
     ) {
         self.pipeline = pipeline
         self.sourceLanguageCode = sourceLanguageCode
         self.targetLanguageCode = targetLanguageCode
         self.voiceID = voiceID
         self.playbackSink = playbackSink
+        self.outputMode = outputMode
     }
 
     public func run<Chunks: AsyncSequence & Sendable>(
@@ -92,6 +111,7 @@ public actor HeptapodLiveSpeechSession {
         let targetLanguageCode = targetLanguageCode
         let voiceID = voiceID
         let playbackSink = playbackSink
+        let outputMode = outputMode
 
         return AsyncThrowingStream { continuation in
             let playbackQueue = LivePlaybackQueue(sink: playbackSink, continuation: continuation)
@@ -102,18 +122,35 @@ public actor HeptapodLiveSpeechSession {
                         index += 1
                         continuation.yield(.segmentStarted(index: index))
 
-                        guard let result = try await pipeline.processDetailed(
+                        guard let transcript = try await pipeline.transcribeSpeech(
                             chunk,
-                            sourceLanguageCode: sourceLanguageCode,
-                            targetLanguageCode: targetLanguageCode,
-                            voiceID: voiceID
+                            sourceLanguageCode: sourceLanguageCode
                         ) else {
                             continuation.yield(.silenceSkipped(index: index))
                             continue
                         }
 
-                        continuation.yield(.result(index: index, result))
-                        await playbackQueue.enqueue(index: index, speech: result.speech)
+                        switch outputMode {
+                        case .speech:
+                            let result = try await pipeline.translateAndSynthesize(
+                                transcript,
+                                sourceLanguageCode: sourceLanguageCode,
+                                targetLanguageCode: targetLanguageCode,
+                                voiceID: voiceID
+                            )
+                            continuation.yield(.result(index: index, result))
+                            await playbackQueue.enqueue(index: index, speech: result.speech)
+                        case .textOnly:
+                            let translation = try await pipeline.translateTranscript(
+                                transcript,
+                                sourceLanguageCode: sourceLanguageCode,
+                                targetLanguageCode: targetLanguageCode
+                            )
+                            continuation.yield(.translation(
+                                index: index,
+                                HeptapodLiveTranslationResult(transcript: transcript, translation: translation)
+                            ))
+                        }
                     }
 
                     try await playbackQueue.drain()
@@ -141,6 +178,7 @@ public actor HeptapodLiveSpeechSession {
         let targetLanguageCode = targetLanguageCode
         let voiceID = voiceID
         let playbackSink = playbackSink
+        let outputMode = outputMode
 
         return AsyncThrowingStream { continuation in
             let playbackQueue = LivePlaybackQueue(sink: playbackSink, continuation: continuation)
@@ -150,7 +188,8 @@ public actor HeptapodLiveSpeechSession {
                 targetLanguageCode: targetLanguageCode,
                 voiceID: voiceID,
                 playbackQueue: playbackQueue,
-                continuation: continuation
+                continuation: continuation,
+                outputMode: outputMode
             )
             let task = Task {
                 do {
@@ -451,6 +490,7 @@ private actor LiveSynthesisQueue {
     private let voiceID: String?
     private let playbackQueue: LivePlaybackQueue
     private let continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
+    private let outputMode: HeptapodLiveOutputMode
     private var tail: Task<Void, Error>?
 
     init(
@@ -459,7 +499,8 @@ private actor LiveSynthesisQueue {
         targetLanguageCode: String,
         voiceID: String?,
         playbackQueue: LivePlaybackQueue,
-        continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
+        continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation,
+        outputMode: HeptapodLiveOutputMode
     ) {
         self.pipeline = pipeline
         self.sourceLanguageCode = sourceLanguageCode
@@ -467,6 +508,7 @@ private actor LiveSynthesisQueue {
         self.voiceID = voiceID
         self.playbackQueue = playbackQueue
         self.continuation = continuation
+        self.outputMode = outputMode
     }
 
     func enqueue(index: Int, transcript: HeptapodTranscriptSegment) {
@@ -474,14 +516,27 @@ private actor LiveSynthesisQueue {
         tail = Task {
             try await previous?.value
             try Task.checkCancellation()
-            let result = try await pipeline.translateAndSynthesize(
-                transcript,
-                sourceLanguageCode: sourceLanguageCode,
-                targetLanguageCode: targetLanguageCode,
-                voiceID: voiceID
-            )
-            continuation.yield(.result(index: index, result))
-            await playbackQueue.enqueue(index: index, speech: result.speech)
+            switch outputMode {
+            case .speech:
+                let result = try await pipeline.translateAndSynthesize(
+                    transcript,
+                    sourceLanguageCode: sourceLanguageCode,
+                    targetLanguageCode: targetLanguageCode,
+                    voiceID: voiceID
+                )
+                continuation.yield(.result(index: index, result))
+                await playbackQueue.enqueue(index: index, speech: result.speech)
+            case .textOnly:
+                let translation = try await pipeline.translateTranscript(
+                    transcript,
+                    sourceLanguageCode: sourceLanguageCode,
+                    targetLanguageCode: targetLanguageCode
+                )
+                continuation.yield(.translation(
+                    index: index,
+                    HeptapodLiveTranslationResult(transcript: transcript, translation: translation)
+                ))
+            }
         }
     }
 

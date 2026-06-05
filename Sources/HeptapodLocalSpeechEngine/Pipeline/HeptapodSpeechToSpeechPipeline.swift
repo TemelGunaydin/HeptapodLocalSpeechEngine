@@ -26,11 +26,13 @@ public actor HeptapodSpeechToSpeechPipeline {
         self.synthesizer = synthesizer
     }
 
-    public func prepare() async throws {
+    public func prepare(includeSynthesis: Bool = true) async throws {
         try await vad?.prepare()
         try await recognizer.prepare()
         try await translator.prepare()
-        try await synthesizer.prepare()
+        if includeSynthesis {
+            try await synthesizer.prepare()
+        }
     }
 
     public func process(
@@ -110,9 +112,9 @@ public actor HeptapodSpeechToSpeechPipeline {
             throw HeptapodEngineError.emptyTranscript
         }
 
-        let translated = try await translator.translate(
-            trimmedTranscript,
-            sourceLanguageCode: transcript.languageCode ?? sourceLanguageCode,
+        let translated = try await translateTranscript(
+            transcript,
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode
         )
 
@@ -155,9 +157,9 @@ public actor HeptapodSpeechToSpeechPipeline {
             return nil
         }
 
-        let translated = try await translator.translate(
-            trimmedTranscript,
-            sourceLanguageCode: transcript.languageCode ?? sourceLanguageCode,
+        let translated = try await translateTranscript(
+            transcript,
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode
         )
 
@@ -171,6 +173,23 @@ public actor HeptapodSpeechToSpeechPipeline {
             transcript: transcript,
             translation: translated,
             speech: speech
+        )
+    }
+
+    public func translateTranscript(
+        _ transcript: HeptapodTranscriptSegment,
+        sourceLanguageCode: String?,
+        targetLanguageCode: String
+    ) async throws -> HeptapodTranslatedText {
+        let trimmedTranscript = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTranscript.isEmpty else {
+            throw HeptapodEngineError.emptyTranscript
+        }
+
+        return try await translator.translate(
+            trimmedTranscript,
+            sourceLanguageCode: transcript.languageCode ?? sourceLanguageCode,
+            targetLanguageCode: targetLanguageCode
         )
     }
 }
