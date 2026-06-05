@@ -6,6 +6,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         HeptapodModelDescriptor.sileroVAD.id,
         HeptapodModelDescriptor.qwenASRCompact.id,
         HeptapodModelDescriptor.madladTranslator.id,
+        HeptapodModelDescriptor.chatterboxTTS.id,
         HeptapodModelDescriptor.kokoroTTS.id
     ]
 
@@ -22,6 +23,10 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         translationModelID: String = HeptapodMADLADTranslatorAdapter.defaultModelID,
         ttsModelID: String = HeptapodKokoroTTSAdapter.defaultModelID,
         vadModelID: String = HeptapodSileroVADAdapter.defaultModelID,
+        chatterboxPythonExecutable: String = "python3",
+        chatterboxScriptURL: URL? = nil,
+        chatterboxVoicePromptURL: URL? = nil,
+        chatterboxDevice: String? = nil,
         offlineMode: Bool = false
     ) throws -> HeptapodSpeechToSpeechPipeline {
         try requireImplemented(configuration.speechRecognitionModelID, stage: .speechRecognition)
@@ -42,7 +47,15 @@ public enum HeptapodSpeechSwiftAdapterFactory {
             vad: vad,
             recognizer: HeptapodQwen3ASRAdapter(modelID: asrModelID, offlineMode: offlineMode),
             translator: HeptapodMADLADTranslatorAdapter(modelID: translationModelID, offlineMode: offlineMode),
-            synthesizer: HeptapodKokoroTTSAdapter(modelID: ttsModelID, offlineMode: offlineMode)
+            synthesizer: makeSynthesizer(
+                for: configuration.speechSynthesisModelID,
+                kokoroModelID: ttsModelID,
+                chatterboxPythonExecutable: chatterboxPythonExecutable,
+                chatterboxScriptURL: chatterboxScriptURL,
+                chatterboxVoicePromptURL: chatterboxVoicePromptURL,
+                chatterboxDevice: chatterboxDevice,
+                offlineMode: offlineMode
+            )
         )
     }
 
@@ -59,6 +72,28 @@ public enum HeptapodSpeechSwiftAdapterFactory {
     ) throws {
         guard implementedModelIDs.contains(id) else {
             throw HeptapodEngineError.adapterNotImplemented(id)
+        }
+    }
+
+    private static func makeSynthesizer(
+        for modelID: String,
+        kokoroModelID: String,
+        chatterboxPythonExecutable: String,
+        chatterboxScriptURL: URL?,
+        chatterboxVoicePromptURL: URL?,
+        chatterboxDevice: String?,
+        offlineMode: Bool
+    ) -> any HeptapodSpeechSynthesizer {
+        switch modelID {
+        case HeptapodModelDescriptor.chatterboxTTS.id:
+            HeptapodChatterboxTTSAdapter(
+                pythonExecutable: chatterboxPythonExecutable,
+                scriptURL: chatterboxScriptURL,
+                voicePromptURL: chatterboxVoicePromptURL,
+                device: chatterboxDevice
+            )
+        default:
+            HeptapodKokoroTTSAdapter(modelID: kokoroModelID, offlineMode: offlineMode)
         }
     }
 }

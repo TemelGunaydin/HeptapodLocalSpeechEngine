@@ -3,6 +3,8 @@
 All numbers are estimates until each adapter pins a model artifact and cache layout.
 The Silero VAD, Qwen3-ASR, MADLAD, and Kokoro combination is runnable today through
 `HeptapodSpeechSwiftAdapters` and the `HeptapodRealSpeechDemo` smoke test.
+Chatterbox is available as an optional local Python TTS bridge for more natural
+speech output.
 
 | Stage | Model | Status | Estimated Install | Notes |
 | --- | --- | --- | ---: | --- |
@@ -16,6 +18,7 @@ The Silero VAD, Qwen3-ASR, MADLAD, and Kokoro combination is runnable today thro
 | MT | NLLB Distilled 600M | Planned | ~1.6 GB | Translation quality candidate |
 | MT | SeamlessM4T text path | Research | ~4.8 GB | Heavy unified translation research |
 | TTS | Kokoro 82M | Adapter target ready | ~130 MB | Smallest useful TTS |
+| TTS | Chatterbox TTS | Python bridge ready | ~2.5 GB | More natural voice; requires local Python env |
 | TTS | Qwen3 TTS 0.6B | Planned | ~1.2 GB | Natural local voice candidate |
 | TTS | CosyVoice3 0.5B | Planned | ~1.0 GB | Expressive TTS candidate |
 | Direct S2ST | SeamlessM4T v2 | Research | ~10 GB | Closest direct S2ST family |
@@ -26,6 +29,12 @@ Starter:
 
 ```text
 Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + Kokoro
+```
+
+Natural voice:
+
+```text
+Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + Chatterbox
 ```
 
 Quality:

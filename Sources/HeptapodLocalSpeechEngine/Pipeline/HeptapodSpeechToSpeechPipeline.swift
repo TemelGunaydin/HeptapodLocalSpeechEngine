@@ -53,6 +53,25 @@ public actor HeptapodSpeechToSpeechPipeline {
         targetLanguageCode: String,
         voiceID: String? = nil
     ) async throws -> HeptapodSpeechToSpeechResult? {
+        guard let transcript = try await transcribeSpeech(
+            chunk,
+            sourceLanguageCode: sourceLanguageCode
+        ) else {
+            return nil
+        }
+
+        return try await translateAndSynthesize(
+            transcript,
+            sourceLanguageCode: sourceLanguageCode,
+            targetLanguageCode: targetLanguageCode,
+            voiceID: voiceID
+        )
+    }
+
+    public func transcribeSpeech(
+        _ chunk: HeptapodAudioChunk,
+        sourceLanguageCode: String?
+    ) async throws -> HeptapodTranscriptSegment? {
         if let vad {
             let containsSpeech = try await vad.containsSpeech(chunk)
             guard containsSpeech else { return nil }
@@ -64,6 +83,16 @@ public actor HeptapodSpeechToSpeechPipeline {
         guard transcript.isFinal else {
             return nil
         }
+
+        return transcript
+    }
+
+    public func translateAndSynthesize(
+        _ transcript: HeptapodTranscriptSegment,
+        sourceLanguageCode: String?,
+        targetLanguageCode: String,
+        voiceID: String? = nil
+    ) async throws -> HeptapodSpeechToSpeechResult {
 
         let trimmedTranscript = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty else {

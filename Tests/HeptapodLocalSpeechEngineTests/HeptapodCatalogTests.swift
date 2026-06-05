@@ -22,6 +22,7 @@ func catalogProvidesAlternativesForEachPipelineStage() {
     #expect(catalog.models(for: .speechRecognition).count >= 3)
     #expect(catalog.models(for: .textTranslation).count >= 2)
     #expect(catalog.models(for: .speechSynthesis).count >= 2)
+    #expect(catalog.models(for: .speechSynthesis).map(\.id).contains(HeptapodModelDescriptor.chatterboxTTS.id))
     #expect(catalog.models(for: .directSpeechToSpeech).isEmpty == false)
 }
 
@@ -88,9 +89,35 @@ func speechSwiftFactoryReportsStarterPipelineRunnable() {
 }
 
 @Test
+func speechSwiftFactoryReportsChatterboxPipelineRunnable() {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.chatterboxTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
+
+    #expect(readiness.canRunInference)
+    #expect(readiness.unavailableDescriptors.isEmpty)
+    #expect(readiness.selectedDescriptors.map(\.id).contains(HeptapodModelDescriptor.chatterboxTTS.id))
+}
+
+@Test
 func speechSwiftFactoryBuildsPipelineWithoutLoadingModels() throws {
     _ = try HeptapodSpeechSwiftAdapterFactory.makePipeline()
     _ = try HeptapodSpeechSwiftAdapterFactory.makePipeline(configuration: HeptapodModelCatalog.starterPipeline)
+}
+
+@Test
+func chatterboxAdapterReportsMissingScriptDuringPrepare() async {
+    let adapter = HeptapodChatterboxTTSAdapter(
+        scriptURL: URL(fileURLWithPath: "/tmp/heptapod-missing-chatterbox-script-\(UUID().uuidString).py")
+    )
+
+    await #expect(throws: HeptapodChatterboxTTSError.self) {
+        try await adapter.prepare()
+    }
 }
 
 @Test
@@ -192,6 +219,56 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
 }
 
 @Test
+func sentenceBufferedLiveSessionFlushesOneResultAfterSilence() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let playbackSink = RecordingPlaybackSink()
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        playbackSink: playbackSink
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("One of the goals of".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("the system is speed.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks())
+    var resultTexts: [String] = []
+    var playbackIndexes: [Int] = []
+
+    for try await event in events {
+        switch event {
+        case .result(_, let result):
+            resultTexts.append(result.transcript.text)
+        case .playbackCompleted(let index):
+            playbackIndexes.append(index)
+        default:
+            break
+        }
+    }
+
+    #expect(resultTexts == ["One of the goals of the system is speed."])
+    #expect(playbackIndexes == [3])
+    #expect(await playbackSink.playedCount() == 1)
+}
+
+@Test
 func wavFilePlaybackSinkWritesSequentialFiles() async throws {
     let outputDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("heptapod-wav-sink-\(UUID().uuidString)")
@@ -232,6 +309,27 @@ private struct StubRecognizer: HeptapodSpeechRecognizer {
     func reset() async {}
 }
 
+private struct UTF8ChunkRecognizer: HeptapodSpeechRecognizer {
+    let descriptor = HeptapodModelDescriptor.qwenASRCompact
+
+    func prepare() async throws {}
+
+    func transcribe(_ chunk: HeptapodAudioChunk, languageHint: String?) async throws -> HeptapodTranscriptSegment? {
+        let text = String(decoding: chunk.pcm16, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.isEmpty == false else {
+            return nil
+        }
+        return HeptapodTranscriptSegment(text: text, languageCode: languageHint)
+    }
+
+    func finish(languageHint: String?) async throws -> HeptapodTranscriptSegment? {
+        nil
+    }
+
+    func reset() async {}
+}
+
 private actor RecordingPlaybackSink: HeptapodSpeechPlaybackSink {
     private var playedSpeech: [HeptapodSynthesizedSpeech] = []
 
@@ -257,6 +355,25 @@ private struct StubTranslator: HeptapodTextTranslator {
         HeptapodTranslatedText(
             sourceText: text,
             translatedText: "merhaba",
+            sourceLanguageCode: sourceLanguageCode,
+            targetLanguageCode: targetLanguageCode
+        )
+    }
+}
+
+private struct EchoTranslator: HeptapodTextTranslator {
+    let descriptor = HeptapodModelDescriptor.madladTranslator
+
+    func prepare() async throws {}
+
+    func translate(
+        _ text: String,
+        sourceLanguageCode: String?,
+        targetLanguageCode: String
+    ) async throws -> HeptapodTranslatedText {
+        HeptapodTranslatedText(
+            sourceText: text,
+            translatedText: text,
             sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode
         )

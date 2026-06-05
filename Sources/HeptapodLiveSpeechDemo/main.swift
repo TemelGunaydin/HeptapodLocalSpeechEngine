@@ -16,16 +16,23 @@ struct HeptapodLiveSpeechDemo {
                 return
             }
 
-            if options.usesRealModels && options.usesMicrophone == false && options.audioPath == nil {
+            if options.selectedLiveSourceCount > 1 {
+                throw DemoError.multipleAudioSources
+            }
+
+            if options.usesRealModels && options.usesMicrophone == false && options.usesSystemAudio == false && options.audioPath == nil {
                 throw DemoError.realModeRequiresAudioSource
             }
 
             if options.audioPath != nil && options.usesRealModels == false {
                 throw DemoError.audioFileRequiresRealMode
             }
+            if (options.usesMicrophone || options.usesSystemAudio) && options.usesRealModels == false {
+                throw DemoError.liveAudioRequiresRealMode
+            }
 
             let targetLanguageCode = options.targetLanguageCode ?? (options.usesRealModels ? "es" : "tr")
-            let pipeline = try makePipeline(usesRealModels: options.usesRealModels)
+            let pipeline = try makePipeline(options: options)
 
             try await pipeline.prepare()
             printHeader(options: options, targetLanguageCode: targetLanguageCode)
@@ -36,7 +43,8 @@ struct HeptapodLiveSpeechDemo {
                     audioPath: audioPath,
                     targetLanguageCode: targetLanguageCode,
                     shouldPlayOutput: options.shouldPlayOutput,
-                    outputDirectory: options.outputDirectory
+                    outputDirectory: options.outputDirectory,
+                    usesSentenceBuffering: options.usesSentenceBuffering
                 )
             } else if options.usesMicrophone {
                 try await runMicrophoneDemo(
@@ -44,7 +52,17 @@ struct HeptapodLiveSpeechDemo {
                     targetLanguageCode: targetLanguageCode,
                     durationSeconds: options.durationSeconds,
                     shouldPlayOutput: options.shouldPlayOutput,
-                    outputDirectory: options.outputDirectory
+                    outputDirectory: options.outputDirectory,
+                    usesSentenceBuffering: options.usesSentenceBuffering
+                )
+            } else if options.usesSystemAudio {
+                try await runSystemAudioDemo(
+                    pipeline: pipeline,
+                    targetLanguageCode: targetLanguageCode,
+                    durationSeconds: options.durationSeconds,
+                    shouldPlayOutput: options.shouldPlayOutput,
+                    outputDirectory: options.outputDirectory,
+                    usesSentenceBuffering: options.usesSentenceBuffering
                 )
             } else if options.isInteractive {
                 try await runInteractiveDemo(
@@ -65,10 +83,14 @@ struct HeptapodLiveSpeechDemo {
         }
     }
 
-    private static func makePipeline(usesRealModels: Bool) throws -> HeptapodSpeechToSpeechPipeline {
-        if usesRealModels {
+    private static func makePipeline(options: DemoOptions) throws -> HeptapodSpeechToSpeechPipeline {
+        if options.usesRealModels {
             return try HeptapodSpeechSwiftAdapterFactory.makePipeline(
-                configuration: HeptapodModelCatalog.starterPipeline
+                configuration: options.pipelineConfiguration,
+                chatterboxPythonExecutable: options.ttsPythonExecutable,
+                chatterboxScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
+                chatterboxVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:)),
+                chatterboxDevice: options.ttsDevice
             )
         }
 
@@ -88,11 +110,12 @@ struct HeptapodLiveSpeechDemo {
         Mode: \(options.usesRealModels ? "real speech-swift adapters" : "preview adapters")
         ASR:  \(HeptapodModelDescriptor.qwenASRCompact.displayName)
         MT:   \(HeptapodModelDescriptor.madladTranslator.displayName)
-        TTS:  \(HeptapodModelDescriptor.kokoroTTS.displayName)
+        TTS:  \(options.ttsDescriptor.displayName)
         Flow: audio chunk source -> live session -> VAD -> ASR -> MT -> TTS -> playback sink
-        Source: \(options.audioPath.map { "audio file: \($0)" } ?? (options.usesMicrophone ? "microphone" : options.isInteractive ? "stdin" : "scripted"))
+        Source: \(options.sourceDescription)
         Target: \(targetLanguageCode)
         Speak: \(options.shouldSpeak || options.shouldPlayOutput ? "on" : "off")
+        Translation timing: \(options.usesSentenceBuffering ? "sentence/pause buffered" : "every chunk")
 
         """)
     }
@@ -105,17 +128,28 @@ struct HeptapodLiveSpeechDemo {
           swift run HeptapodLiveSpeechDemo -- --cache-status
           swift run HeptapodLiveSpeechDemo -- --real --audio /path/to/input.wav --to es --output-dir /tmp/heptapod-live
           swift run HeptapodLiveSpeechDemo -- --real --microphone --to es --duration 10 --play-output
+          swift run HeptapodLiveSpeechDemo -- --real --system-audio --to tr --play-output
+          swift run HeptapodLiveSpeechDemo -- --real --system-audio --to tr --tts chatterbox --play-output
 
         Options:
           --interactive       Type preview text segments on stdin.
-          --real              Use real speech-swift adapters. Requires --audio or --microphone.
+          --real              Use real speech-swift adapters. Requires --audio, --microphone, or --system-audio.
           --audio <path>      Stream an audio file through the live session.
           --microphone        Capture live microphone audio chunks.
+          --system-audio      Capture macOS system audio with ScreenCaptureKit.
           --duration <sec>    Stop microphone capture after this many seconds.
           --to <code>         Target language. Default: tr for preview, es for real mode.
+          --tts <name>        Real mode TTS backend: kokoro or chatterbox. Default: kokoro.
+          --tts-script <path> Chatterbox bridge script. Default: Tools/chatterbox_tts.py.
+          --tts-python <name> Python executable for Chatterbox. Default: python3.
+          --tts-device <name> Chatterbox torch device: auto, cpu, mps, or cuda.
+          --tts-voice-prompt <path>
+                              Optional reference WAV for Chatterbox voice cloning.
+          --chunk-translation
+                              Translate every audio chunk instead of waiting for sentence/pause endpointing.
           --output-dir <path> Write synthesized live segments as WAV files.
           --speak             Preview mode only: speak translated text with /usr/bin/say.
-          --play-output       Real microphone mode: play synthesized speech with AVAudioEngine.
+          --play-output       Real live mode: play synthesized speech with AVAudioEngine.
           --cache-status      Print starter model cache paths and cached sizes.
           --help              Show this help.
         """)
@@ -175,7 +209,8 @@ struct HeptapodLiveSpeechDemo {
         targetLanguageCode: String,
         durationSeconds: Double?,
         shouldPlayOutput: Bool,
-        outputDirectory: String?
+        outputDirectory: String?,
+        usesSentenceBuffering: Bool
     ) async throws {
         print("Listening. Stop with Ctrl+C\(durationSeconds.map { " or wait \($0)s" } ?? "").\n")
         let source = HeptapodAVAudioMicrophoneSource(maximumDurationSeconds: durationSeconds)
@@ -185,9 +220,40 @@ struct HeptapodLiveSpeechDemo {
             chunks: source.chunks(),
             targetLanguageCode: targetLanguageCode,
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
+            usesSentenceBuffering: usesSentenceBuffering,
             shouldSpeak: false
         )
         try await printWrittenFiles(fileSink)
+    }
+
+    private static func runSystemAudioDemo(
+        pipeline: HeptapodSpeechToSpeechPipeline,
+        targetLanguageCode: String,
+        durationSeconds: Double?,
+        shouldPlayOutput: Bool,
+        outputDirectory: String?,
+        usesSentenceBuffering: Bool
+    ) async throws {
+        #if os(macOS)
+        print("""
+        Capturing macOS system audio. Start YouTube/browser playback now.
+        Stop with Ctrl+C\(durationSeconds.map { " or wait \($0)s" } ?? "").
+
+        """)
+        let source = HeptapodScreenCaptureSystemAudioSource(maximumDurationSeconds: durationSeconds)
+        let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
+        try await runLiveSession(
+            pipeline: pipeline,
+            chunks: source.chunks(),
+            targetLanguageCode: targetLanguageCode,
+            playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
+            usesSentenceBuffering: usesSentenceBuffering,
+            shouldSpeak: false
+        )
+        try await printWrittenFiles(fileSink)
+        #else
+        throw DemoError.systemAudioRequiresMacOS
+        #endif
     }
 
     private static func runAudioFileDemo(
@@ -195,7 +261,8 @@ struct HeptapodLiveSpeechDemo {
         audioPath: String,
         targetLanguageCode: String,
         shouldPlayOutput: Bool,
-        outputDirectory: String?
+        outputDirectory: String?,
+        usesSentenceBuffering: Bool
     ) async throws {
         let source = HeptapodAudioFileChunkSource(url: URL(fileURLWithPath: audioPath))
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
@@ -204,6 +271,7 @@ struct HeptapodLiveSpeechDemo {
             chunks: source.chunks(),
             targetLanguageCode: targetLanguageCode,
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
+            usesSentenceBuffering: usesSentenceBuffering,
             shouldSpeak: false
         )
         try await printWrittenFiles(fileSink)
@@ -246,6 +314,7 @@ struct HeptapodLiveSpeechDemo {
         chunks: AsyncThrowingStream<HeptapodAudioChunk, Error>,
         targetLanguageCode: String,
         playbackSink: (any HeptapodSpeechPlaybackSink)? = nil,
+        usesSentenceBuffering: Bool = false,
         shouldSpeak: Bool
     ) async throws {
         let session = HeptapodLiveSpeechSession(
@@ -254,7 +323,9 @@ struct HeptapodLiveSpeechDemo {
             targetLanguageCode: targetLanguageCode,
             playbackSink: playbackSink
         )
-        let events = await session.run(chunks: chunks)
+        let events = usesSentenceBuffering
+            ? await session.runSentenceBuffered(chunks: chunks)
+            : await session.run(chunks: chunks)
 
         for try await event in events {
             switch event {
@@ -293,11 +364,18 @@ private struct DemoOptions {
     let isInteractive: Bool
     let usesRealModels: Bool
     let usesMicrophone: Bool
+    let usesSystemAudio: Bool
     let shouldSpeak: Bool
     let shouldPlayOutput: Bool
     let shouldPrintHelp: Bool
     let shouldPrintCacheStatus: Bool
+    let usesSentenceBuffering: Bool
     let targetLanguageCode: String?
+    let ttsBackend: DemoTTSBackend
+    let ttsScriptPath: String?
+    let ttsPythonExecutable: String
+    let ttsDevice: String?
+    let ttsVoicePromptPath: String?
     let durationSeconds: Double?
     let audioPath: String?
     let outputDirectory: String?
@@ -306,11 +384,18 @@ private struct DemoOptions {
         var isInteractive = false
         var usesRealModels = false
         var usesMicrophone = false
+        var usesSystemAudio = false
         var shouldSpeak = false
         var shouldPlayOutput = false
         var shouldPrintHelp = false
         var shouldPrintCacheStatus = false
+        var usesSentenceBuffering = true
         var targetLanguageCode: String?
+        var ttsBackend = DemoTTSBackend.kokoro
+        var ttsScriptPath: String?
+        var ttsPythonExecutable = "python3"
+        var ttsDevice: String?
+        var ttsVoicePromptPath: String?
         var durationSeconds: Double?
         var audioPath: String?
         var outputDirectory: String?
@@ -329,14 +414,36 @@ private struct DemoOptions {
                 audioPath = try Self.value(after: argument, in: arguments, at: &index)
             case "--microphone":
                 usesMicrophone = true
+            case "--system-audio":
+                usesSystemAudio = true
             case "--speak":
                 shouldSpeak = true
             case "--play-output":
                 shouldPlayOutput = true
             case "--cache-status":
                 shouldPrintCacheStatus = true
+            case "--chunk-translation":
+                usesSentenceBuffering = false
             case "--to":
                 targetLanguageCode = try Self.value(after: argument, in: arguments, at: &index)
+            case "--tts":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let backend = DemoTTSBackend(rawValue: rawValue.lowercased()) else {
+                    throw DemoError.invalidTTSBackend(rawValue)
+                }
+                ttsBackend = backend
+            case "--tts-script":
+                ttsScriptPath = try Self.value(after: argument, in: arguments, at: &index)
+            case "--tts-python":
+                ttsPythonExecutable = try Self.value(after: argument, in: arguments, at: &index)
+            case "--tts-device":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard ["auto", "cpu", "mps", "cuda"].contains(rawValue) else {
+                    throw DemoError.invalidTTSDevice(rawValue)
+                }
+                ttsDevice = rawValue == "auto" ? nil : rawValue
+            case "--tts-voice-prompt":
+                ttsVoicePromptPath = try Self.value(after: argument, in: arguments, at: &index)
             case "--output-dir":
                 outputDirectory = try Self.value(after: argument, in: arguments, at: &index)
             case "--duration":
@@ -356,11 +463,18 @@ private struct DemoOptions {
         self.isInteractive = isInteractive
         self.usesRealModels = usesRealModels
         self.usesMicrophone = usesMicrophone
+        self.usesSystemAudio = usesSystemAudio
         self.shouldSpeak = shouldSpeak
         self.shouldPlayOutput = shouldPlayOutput
         self.shouldPrintHelp = shouldPrintHelp
         self.shouldPrintCacheStatus = shouldPrintCacheStatus
+        self.usesSentenceBuffering = usesSentenceBuffering
         self.targetLanguageCode = targetLanguageCode
+        self.ttsBackend = ttsBackend
+        self.ttsScriptPath = ttsScriptPath
+        self.ttsPythonExecutable = ttsPythonExecutable
+        self.ttsDevice = ttsDevice
+        self.ttsVoicePromptPath = ttsVoicePromptPath
         self.durationSeconds = durationSeconds
         self.audioPath = audioPath
         self.outputDirectory = outputDirectory
@@ -374,6 +488,49 @@ private struct DemoOptions {
         index = valueIndex
         return arguments[valueIndex]
     }
+
+    var sourceDescription: String {
+        if let audioPath {
+            return "audio file: \(audioPath)"
+        }
+        if usesMicrophone {
+            return "microphone"
+        }
+        if usesSystemAudio {
+            return "macOS system audio"
+        }
+        if isInteractive {
+            return "stdin"
+        }
+        return "scripted"
+    }
+
+    var selectedLiveSourceCount: Int {
+        (audioPath == nil ? 0 : 1) + (usesMicrophone ? 1 : 0) + (usesSystemAudio ? 1 : 0)
+    }
+
+    var pipelineConfiguration: HeptapodPipelineConfiguration {
+        HeptapodPipelineConfiguration(
+            speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+            textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+            speechSynthesisModelID: ttsDescriptor.id,
+            voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+        )
+    }
+
+    var ttsDescriptor: HeptapodModelDescriptor {
+        switch ttsBackend {
+        case .kokoro:
+            HeptapodModelDescriptor.kokoroTTS
+        case .chatterbox:
+            HeptapodModelDescriptor.chatterboxTTS
+        }
+    }
+}
+
+private enum DemoTTSBackend: String {
+    case kokoro
+    case chatterbox
 }
 
 private struct CompositePlaybackSink: HeptapodSpeechPlaybackSink {
@@ -388,21 +545,36 @@ private struct CompositePlaybackSink: HeptapodSpeechPlaybackSink {
 
 private enum DemoError: LocalizedError {
     case invalidDuration(String)
+    case invalidTTSBackend(String)
+    case invalidTTSDevice(String)
     case audioFileRequiresRealMode
+    case liveAudioRequiresRealMode
     case missingValue(String)
+    case multipleAudioSources
     case realModeRequiresAudioSource
+    case systemAudioRequiresMacOS
     case unknownArgument(String)
 
     var errorDescription: String? {
         switch self {
         case .invalidDuration(let value):
             "Invalid duration: \(value)."
+        case .invalidTTSBackend(let value):
+            "Invalid TTS backend: \(value). Use kokoro or chatterbox."
+        case .invalidTTSDevice(let value):
+            "Invalid TTS device: \(value). Use auto, cpu, mps, or cuda."
         case .audioFileRequiresRealMode:
             "Audio file live mode requires --real."
+        case .liveAudioRequiresRealMode:
+            "Microphone and system-audio live modes require --real."
         case .missingValue(let option):
             "Missing value after \(option)."
+        case .multipleAudioSources:
+            "Choose only one live audio source: --audio, --microphone, or --system-audio."
         case .realModeRequiresAudioSource:
-            "Real live mode requires --audio or --microphone."
+            "Real live mode requires --audio, --microphone, or --system-audio."
+        case .systemAudioRequiresMacOS:
+            "System audio capture requires macOS."
         case .unknownArgument(let argument):
             "Unknown argument: \(argument)."
         }

@@ -6,12 +6,12 @@ public actor HeptapodAVAudioPlaybackSink: HeptapodSpeechPlaybackSink {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var isPrepared = false
+    private var playbackSampleRate: Double?
+    private var playbackChannelCount: AVAudioChannelCount?
 
     public init() {}
 
     public func play(_ speech: HeptapodSynthesizedSpeech) async throws {
-        try prepareIfNeeded()
-
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: Double(speech.sampleRate),
@@ -20,6 +20,7 @@ public actor HeptapodAVAudioPlaybackSink: HeptapodSpeechPlaybackSink {
         ) else {
             throw HeptapodAVAudioPlaybackError.invalidFormat
         }
+        try prepareIfNeeded(format: format)
 
         let samples = HeptapodSpeechSwiftAudioSamples.floatSamples(fromPCM16: speech.pcm16)
         guard let buffer = AVAudioPCMBuffer(
@@ -44,8 +45,10 @@ public actor HeptapodAVAudioPlaybackSink: HeptapodSpeechPlaybackSink {
         }
     }
 
-    private func prepareIfNeeded() throws {
-        guard isPrepared == false else {
+    private func prepareIfNeeded(format: AVAudioFormat) throws {
+        if isPrepared,
+           playbackSampleRate == format.sampleRate,
+           playbackChannelCount == format.channelCount {
             return
         }
 
@@ -55,11 +58,22 @@ public actor HeptapodAVAudioPlaybackSink: HeptapodSpeechPlaybackSink {
         try session.setActive(true)
         #endif
 
-        engine.attach(player)
-        let outputFormat = engine.outputNode.inputFormat(forBus: 0)
-        engine.connect(player, to: engine.outputNode, format: outputFormat)
-        try engine.start()
+        if isPrepared {
+            player.stop()
+            engine.disconnectNodeOutput(player)
+            engine.stop()
+        } else {
+            engine.attach(player)
+        }
+
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        engine.prepare()
+        if engine.isRunning == false {
+            try engine.start()
+        }
         isPrepared = true
+        playbackSampleRate = format.sampleRate
+        playbackChannelCount = format.channelCount
     }
 }
 

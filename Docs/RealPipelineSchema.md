@@ -97,8 +97,9 @@ HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodRealSpeechDemo -- \
 
 The file smoke test is verified end to end. `HeptapodLiveSpeechDemo --real
 --audio` verifies the same live session with deterministic file input, and
-`HeptapodLiveSpeechDemo --real --microphone` uses the same core stages with
-microphone input and optional AVAudio playback:
+`HeptapodLiveSpeechDemo --real --microphone` and
+`HeptapodLiveSpeechDemo --real --system-audio` use the same core stages with
+live input and optional AVAudio playback:
 
 ```mermaid
 flowchart LR
@@ -116,6 +117,14 @@ flowchart LR
     mt --> metrics
     tts --> metrics
 ```
+
+The system-audio path captures macOS output through ScreenCaptureKit, converts it
+to 16 kHz mono PCM chunks, and feeds the same live session as microphone and file
+input. macOS may require Screen Recording permission for the terminal process.
+Live audio sources now use sentence/pause endpointing by default: ASR text is
+buffered while speech continues, then translation and TTS run after a silence
+endpoint or stream end. `--chunk-translation` keeps the older per-chunk behavior
+for debugging latency.
 
 The remaining work is app-level polish: permission UX, background audio
 behavior, streaming partial-ASR improvements, and production playback

@@ -33,6 +33,7 @@ public struct HeptapodModelCatalog: Sendable {
         .nllbDistilledTranslator,
         .seamlessTextTranslator,
         .qwenTTSCompact,
+        .chatterboxTTS,
         .kokoroTTS,
         .cosyVoiceTTS,
         .seamlessDirectSpeech
@@ -294,6 +295,28 @@ public extension HeptapodModelDescriptor {
         languageCoverage: HeptapodLanguageCoverage(notes: "Good quality TTS with limited but useful language coverage."),
         summary: "Best candidate for natural local speech output.",
         tradeoffs: "Bigger than Kokoro and may compete with ASR/translation for GPU memory."
+    )
+
+    static let chatterboxTTS = HeptapodModelDescriptor(
+        id: "tts.chatterbox.python",
+        stage: .speechSynthesis,
+        displayName: "Chatterbox TTS",
+        provider: "Resemble AI",
+        family: "Chatterbox",
+        backend: .custom,
+        capabilities: [.batchTTS, .voiceCloning],
+        qualityTier: .highQuality,
+        latencyTier: .segmentBased,
+        status: .adapterRequired,
+        footprint: HeptapodModelFootprint(
+            downloadSize: .gigabytes(1.5),
+            installedSize: .gigabytes(2.5),
+            recommendedMemory: .gigabytes(8)
+        ),
+        languageCoverage: HeptapodLanguageCoverage(notes: "Natural-sounding local Python TTS backend. Use Chatterbox-Multilingual for translated output languages."),
+        summary: "More human-sounding TTS path for local live translation.",
+        tradeoffs: "Requires a local Python environment with chatterbox-tts installed; first synthesis may be slower than Kokoro.",
+        licenseNote: "Chatterbox source is MIT; verify selected model weights and voice prompt rights before distribution."
     )
 
     static let cosyVoiceTTS = HeptapodModelDescriptor(

@@ -148,6 +148,47 @@ HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
   --play-output
 ```
 
+Real macOS system-audio live session:
+
+```bash
+HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
+  --real \
+  --system-audio \
+  --to tr \
+  --play-output
+```
+
+Live audio sources use sentence/pause buffering by default: ASR results are
+accumulated while the speaker is talking, then translation and TTS run when a
+pause/silence endpoint is detected. This avoids speaking tiny partial fragments
+such as "One of the goals of." Use `--chunk-translation` to restore the older
+translate-every-chunk behavior.
+
+More natural Chatterbox TTS output:
+
+```bash
+/opt/homebrew/bin/python3.11 -m venv .venv-chatterbox311
+.venv-chatterbox311/bin/pip install chatterbox-tts torchaudio
+
+HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
+  --real \
+  --system-audio \
+  --to tr \
+  --tts chatterbox \
+  --tts-python .venv-chatterbox311/bin/python \
+  --play-output
+```
+
+For voice cloning, pass a permitted 5-10 second reference WAV:
+
+```bash
+--tts-voice-prompt /path/to/reference-voice.wav
+```
+
+Start YouTube, Safari, Chrome, or another app after the capture begins. macOS may
+ask for Screen Recording permission for the terminal process; grant it and rerun
+the command if capture fails the first time.
+
 Real local model smoke test from an audio file:
 
 ```bash
@@ -161,7 +202,8 @@ HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodRealSpeechDemo -- \
 ```
 
 The real demo uses Qwen3-ASR, MADLAD-400, and Kokoro through the
-`HeptapodSpeechSwiftAdapters` target, which wraps `speech-swift`.
+`HeptapodSpeechSwiftAdapters` target, which wraps `speech-swift`. It can also use
+Chatterbox through a local Python bridge for more natural speech output.
 The first run downloads model weights from Hugging Face and caches them locally.
 The JSON report records model load times, per-stage inference latency, transcript,
 translation, audio durations, and output paths.
@@ -373,7 +415,7 @@ That can be added later, but the first version should prioritize correctness and
 ## Integration Plan
 
 1. Keep this package independent from Heptapod UI.
-2. Add microphone/audio-queue edges for live local mode.
+2. Add microphone, system-audio, and audio-queue edges for live local mode.
 3. Add richer model download/cache status reporting per adapter.
 4. Add a Heptapod settings screen for local engine model selection.
 5. Add benchmark logging: latency, disk size, memory pressure, and translation quality notes.
@@ -391,10 +433,10 @@ This package currently contains:
 - Detailed pipeline results that expose transcript, translated text, and synthesized speech.
 - Unavailable placeholder adapters for not-yet-integrated models.
 - A placeholder adapter factory that can build the selected pipeline shape before real inference adapters exist.
-- `HeptapodSpeechSwiftAdapters`, which provides runnable Silero VAD, Qwen3-ASR, MADLAD-400, Kokoro, AVAudio microphone, and AVAudio playback adapters.
+- `HeptapodSpeechSwiftAdapters`, which provides runnable Silero VAD, Qwen3-ASR, MADLAD-400, Kokoro, AVAudio microphone/playback, and ScreenCaptureKit system-audio adapters.
 - A real file-based speech-to-speech smoke test executable and recorded experiment result.
 
 It runs file-based local inference through the speech-swift adapter target and
-has a microphone-backed live demo path. The remaining production gap is app
-integration polish: permissions UX, background audio behavior, user-facing model
-cache status, and production playback scheduling.
+has microphone-backed and system-audio-backed live demo paths. The remaining
+production gap is app integration polish: permissions UX, background audio
+behavior, user-facing model cache status, and production playback scheduling.

@@ -70,5 +70,6 @@ This keeps the product free to move from Qwen to WhisperKit, from MADLAD to NLLB
 
 `HeptapodSpeechSwiftAdapters` is the first concrete adapter target. It keeps
 `speech-swift` and AVFoundation dependencies out of the model-agnostic core
-package while making Silero VAD, Qwen3-ASR, MADLAD-400, Kokoro, microphone
-capture, and playback usable through the core engine protocols.
+package while making Silero VAD, Qwen3-ASR, MADLAD-400, Kokoro, Chatterbox
+Python TTS, microphone capture, system-audio capture, and playback usable
+through the core engine protocols.
