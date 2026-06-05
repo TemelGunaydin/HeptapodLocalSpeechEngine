@@ -36,6 +36,7 @@ public struct HeptapodModelCatalog: Sendable {
         .chatterboxTTS,
         .kokoroTTS,
         .cosyVoiceTTS,
+        .seamlessStreamingDirectSpeech,
         .seamlessDirectSpeech
     ]
 
@@ -51,6 +52,14 @@ public struct HeptapodModelCatalog: Sendable {
         textTranslationModelID: HeptapodModelDescriptor.nllbDistilledTranslator.id,
         speechSynthesisModelID: HeptapodModelDescriptor.qwenTTSCompact.id,
         voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+
+    public static let seamlessStreamingResearchPipeline = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.seamlessTextTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id,
+        directSpeechToSpeechModelID: HeptapodModelDescriptor.seamlessStreamingDirectSpeech.id
     )
 }
 
@@ -338,6 +347,28 @@ public extension HeptapodModelDescriptor {
         languageCoverage: HeptapodLanguageCoverage(notes: "Good expressive TTS candidate for supported languages."),
         summary: "Alternative expressive TTS model.",
         tradeoffs: "Adapter and voice management are separate integration work."
+    )
+
+    static let seamlessStreamingDirectSpeech = HeptapodModelDescriptor(
+        id: "s2st.seamless_streaming.emma",
+        stage: .directSpeechToSpeech,
+        displayName: "SeamlessStreaming",
+        provider: "Meta",
+        family: "SeamlessStreaming",
+        backend: .seamless,
+        capabilities: [.directSpeechToSpeech, .speechToTextTranslation, .streamingTTS, .simultaneousSpeechTranslation],
+        qualityTier: .research,
+        latencyTier: .nearRealtime,
+        status: .research,
+        footprint: HeptapodModelFootprint(
+            downloadSize: .gigabytes(8.0),
+            installedSize: .gigabytes(10.0),
+            recommendedMemory: .gigabytes(16)
+        ),
+        languageCoverage: HeptapodLanguageCoverage(notes: "Research path for simultaneous speech-to-text and speech-to-speech translation; target speech language coverage is narrower than text output."),
+        summary: "Streaming direct S2ST candidate using EMMA-style incremental target generation.",
+        tradeoffs: "Research-only in this Swift package until model artifacts, runtime, licensing, and latency are validated on Apple hardware.",
+        licenseNote: "Verify Meta Seamless model license and redistribution terms before product use."
     )
 
     static let seamlessDirectSpeech = HeptapodModelDescriptor(

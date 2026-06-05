@@ -29,6 +29,7 @@ public enum HeptapodCapability: String, Codable, Sendable {
     case directSpeechToSpeech
     case voiceCloning
     case wordTimestamps
+    case simultaneousSpeechTranslation
 }
 
 public enum HeptapodQualityTier: String, Codable, Sendable {

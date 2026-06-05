@@ -24,6 +24,19 @@ func catalogProvidesAlternativesForEachPipelineStage() {
     #expect(catalog.models(for: .speechSynthesis).count >= 2)
     #expect(catalog.models(for: .speechSynthesis).map(\.id).contains(HeptapodModelDescriptor.chatterboxTTS.id))
     #expect(catalog.models(for: .directSpeechToSpeech).isEmpty == false)
+    #expect(catalog.models(for: .directSpeechToSpeech).map(\.id).contains(HeptapodModelDescriptor.seamlessStreamingDirectSpeech.id))
+}
+
+@Test
+func seamlessStreamingResearchPipelineIsCataloguedButNotRunnable() throws {
+    let catalog = HeptapodModelCatalog()
+    let configuration = HeptapodModelCatalog.seamlessStreamingResearchPipeline
+
+    try configuration.validate(in: catalog)
+
+    let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
+    #expect(readiness.canRunInference == false)
+    #expect(readiness.unavailableDescriptors.map(\.id).contains(HeptapodModelDescriptor.seamlessStreamingDirectSpeech.id))
 }
 
 @Test

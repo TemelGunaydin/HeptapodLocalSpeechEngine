@@ -77,3 +77,24 @@ public struct HeptapodUnavailableSpeechSynthesizer: HeptapodSpeechSynthesizer {
         throw HeptapodEngineError.adapterNotImplemented(descriptor.id)
     }
 }
+
+public struct HeptapodUnavailableDirectSpeechTranslator: HeptapodDirectSpeechTranslator {
+    public let descriptor: HeptapodModelDescriptor
+
+    public init(descriptor: HeptapodModelDescriptor) {
+        self.descriptor = descriptor
+    }
+
+    public func prepare() async throws {
+        throw HeptapodEngineError.adapterNotImplemented(descriptor.id)
+    }
+
+    public func translateSpeech(
+        _ chunk: HeptapodAudioChunk,
+        sourceLanguageCode: String?,
+        targetLanguageCode: String,
+        voiceID: String?
+    ) async throws -> HeptapodSynthesizedSpeech? {
+        throw HeptapodEngineError.adapterNotImplemented(descriptor.id)
+    }
+}

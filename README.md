@@ -289,6 +289,7 @@ TTS alternatives:
 
 Direct speech-to-speech:
 
+- SeamlessStreaming: research path for simultaneous speech-to-text/speech-to-speech translation with lower latency than offline SeamlessM4T-style S2ST.
 - SeamlessM4T v2: closest research family to direct local S2ST, but too heavy to be the first production path.
 
 All file sizes are estimates until each adapter owns a concrete model artifact and cache layout.
@@ -309,6 +310,7 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 | TTS | Kokoro 82M | CoreML | Adapter target ready | ~130 MB | Small local TTS | Less natural |
 | TTS | Qwen3 TTS 0.6B | MLX Swift | Planned | ~1.2 GB | Natural local speech | Memory/GPU pressure |
 | TTS | CosyVoice3 0.5B | MLX Swift | Planned | ~1.0 GB | Expressive TTS | Adapter and voice management |
+| Direct S2ST | SeamlessStreaming | Seamless | Research | ~10 GB | Simultaneous speech translation | Research runtime, packaging, license validation |
 | Direct S2ST | SeamlessM4T v2 | Seamless | Research | ~10 GB | Single-family speech translation | Too heavy for first production path |
 
 ## First Product Targets
@@ -330,7 +332,7 @@ Estimated installed size: roughly 6.4 GB
 Research direct S2ST mode:
 
 ```text
-SeamlessM4T v2
+SeamlessStreaming / SeamlessM4T v2
 Estimated installed size: roughly 10 GB+
 ```
 
@@ -430,8 +432,9 @@ Useful advanced metrics:
    - Add a translation quality alternative.
    - Decide whether conversion/runtime cost is acceptable.
 
-8. `SeamlessM4TExperimentAdapter`
-   - Keep as research-only until packaging and latency are proven.
+8. `SeamlessStreamingExperimentAdapter`
+   - Prototype a direct S2ST worker around SeamlessStreaming.
+   - Keep as research-only until packaging, licensing, and Apple-hardware latency are proven.
 
 ## Heptapod Integration Plan
 

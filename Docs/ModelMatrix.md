@@ -21,6 +21,7 @@ speech output.
 | TTS | Chatterbox TTS | Python bridge ready | ~2.5 GB | More natural voice; requires local Python env |
 | TTS | Qwen3 TTS 0.6B | Planned | ~1.2 GB | Natural local voice candidate |
 | TTS | CosyVoice3 0.5B | Planned | ~1.0 GB | Expressive TTS candidate |
+| Direct S2ST | SeamlessStreaming | Research | ~10 GB | Simultaneous direct S2ST/S2TT candidate |
 | Direct S2ST | SeamlessM4T v2 | Research | ~10 GB | Closest direct S2ST family |
 
 ## Suggested Presets
@@ -46,5 +47,5 @@ Silero VAD + Qwen3 ASR 1.7B + NLLB Distilled + Qwen3 TTS
 Research:
 
 ```text
-SeamlessM4T v2 direct S2ST
+SeamlessStreaming direct S2ST
 ```

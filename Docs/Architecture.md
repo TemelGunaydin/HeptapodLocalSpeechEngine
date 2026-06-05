@@ -43,6 +43,9 @@ streaming audio session
 The local product path keeps the cascaded stages for now and incrementally
 pushes latency down before attempting SeamlessStreaming-style end-to-end speech
 translation.
+`SeamlessStreaming` is tracked as a separate direct S2ST research model in the
+catalog rather than as a default pipeline stage, because it needs a validated
+runtime, model artifact packaging, and license review before product use.
 
 ## Runtime Ownership
 
