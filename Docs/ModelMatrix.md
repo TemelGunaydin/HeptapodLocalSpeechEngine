@@ -6,6 +6,11 @@ The Silero VAD, Qwen3-ASR, MADLAD, and Kokoro combination is runnable today thro
 Chatterbox is available as an optional local Python TTS bridge for more natural
 speech output.
 
+Nemotron 3.5 ASR Streaming is tracked through the MLX community conversion,
+not the original NeMo-only path. It currently needs `mlx-audio` with Nemotron
+support; use it as an Apple Silicon benchmark candidate before promoting it to a
+Swift-native adapter.
+
 | Stage | Model | Status | Estimated Install | Notes |
 | --- | --- | --- | ---: | --- |
 | VAD | Silero VAD | Adapter target ready | ~8 MB | Low-cost silence gate |
@@ -14,6 +19,7 @@ speech output.
 | ASR | WhisperKit Base | Planned | ~220 MB | Streaming/timestamps candidate |
 | ASR | WhisperKit Large v3 | Planned | ~3.4 GB | Heavy high-quality ASR |
 | ASR | Parakeet Streaming | Planned | ~340 MB | True partial ASR candidate |
+| ASR | Nemotron 3.5 ASR Streaming 0.6B | Planned | ~1.5 GB | MLX/Python cache-aware streaming candidate |
 | MT | MADLAD-400 3B | Adapter target ready | ~2.8 GB | Practical first local translator |
 | MT | NLLB Distilled 600M | Planned | ~1.6 GB | Translation quality candidate |
 | MT | SeamlessM4T text path | Research | ~4.8 GB | Heavy unified translation research |
@@ -47,5 +53,5 @@ Silero VAD + Qwen3 ASR 1.7B + NLLB Distilled + Qwen3 TTS
 Research:
 
 ```text
-SeamlessStreaming direct S2ST
+Nemotron ASR via mlx-audio, SeamlessStreaming direct S2ST
 ```

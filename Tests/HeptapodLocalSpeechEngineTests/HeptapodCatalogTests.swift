@@ -40,6 +40,27 @@ func seamlessStreamingResearchPipelineIsCataloguedButNotRunnable() throws {
 }
 
 @Test
+func nemotronStreamingASRIsCataloguedAsPlannedAdapterCandidate() {
+    let catalog = HeptapodModelCatalog()
+    let speechRecognitionModels = catalog.models(for: .speechRecognition)
+
+    #expect(speechRecognitionModels.map(\.id).contains(HeptapodModelDescriptor.nemotronStreamingASR.id))
+    #expect(HeptapodModelDescriptor.nemotronStreamingASR.status == .planned)
+    #expect(HeptapodModelDescriptor.nemotronStreamingASR.capabilities.contains(.streamingASR))
+
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.nemotronStreamingASR.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
+
+    #expect(readiness.canRunInference == false)
+    #expect(readiness.unavailableDescriptors.map(\.id).contains(HeptapodModelDescriptor.nemotronStreamingASR.id))
+}
+
+@Test
 func missingModelFailsValidation() {
     let catalog = HeptapodModelCatalog()
     let configuration = HeptapodPipelineConfiguration(

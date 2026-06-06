@@ -29,6 +29,7 @@ public struct HeptapodModelCatalog: Sendable {
         .whisperKitBase,
         .whisperKitLarge,
         .parakeetStreaming,
+        .nemotronStreamingASR,
         .madladTranslator,
         .nllbDistilledTranslator,
         .seamlessTextTranslator,
@@ -199,6 +200,31 @@ public extension HeptapodModelDescriptor {
         languageCoverage: HeptapodLanguageCoverage(notes: "Best fit when true partial ASR is more important than broad language coverage."),
         summary: "Streaming-first ASR alternative.",
         tradeoffs: "Language coverage may be narrower than Qwen/Whisper depending on model variant."
+    )
+
+    static let nemotronStreamingASR = HeptapodModelDescriptor(
+        id: "asr.nemotron3_5.streaming.0_6b.mlx_audio",
+        stage: .speechRecognition,
+        displayName: "Nemotron 3.5 ASR Streaming 0.6B",
+        provider: "NVIDIA / MLX Community",
+        family: "Nemotron ASR / FastConformer-RNNT",
+        backend: .custom,
+        capabilities: [.streamingASR, .batchASR],
+        qualityTier: .highQuality,
+        latencyTier: .realtime,
+        status: .planned,
+        footprint: HeptapodModelFootprint(
+            downloadSize: .gigabytes(1.3),
+            installedSize: .gigabytes(1.5),
+            recommendedMemory: .gigabytes(6)
+        ),
+        languageCoverage: HeptapodLanguageCoverage(
+            sourceLanguageCodes: ["en-US", "en-GB", "tr-TR", "es-ES", "fr-FR", "de-DE"],
+            notes: "MLX conversion covers 40 language-locales with language-ID prompting; English and Turkish are transcription-ready in the upstream model."
+        ),
+        summary: "Best current ASR candidate for replacing chunked Qwen with cache-aware streaming on Apple Silicon.",
+        tradeoffs: "Requires an mlx-audio Python bridge today; Nemotron support is on mlx-audio main and not yet in a PyPI release. Direct Swift adapter still needs separate work.",
+        licenseNote: "NVIDIA Open Model License; verify redistribution and deployment restrictions before product use."
     )
 
     static let madladTranslator = HeptapodModelDescriptor(

@@ -274,6 +274,7 @@ ASR alternatives:
 - Qwen3 ASR 1.7B 8-bit: better accuracy, about 3.6 GB installed.
 - WhisperKit Base/Large: good future path for streaming ASR and word timestamps.
 - Parakeet Streaming: streaming-first ASR candidate.
+- Nemotron 3.5 ASR Streaming 0.6B: MLX community conversion plus `mlx-audio` candidate for true cache-aware streaming ASR on Apple Silicon.
 
 Text translation alternatives:
 
@@ -304,6 +305,7 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 | ASR | WhisperKit Base | CoreML/WhisperKit | Planned | ~220 MB | Streaming ASR, timestamps | Separate model management |
 | ASR | WhisperKit Large v3 | CoreML/WhisperKit | Planned | ~3.4 GB | Maximum ASR quality | Heavy |
 | ASR | Parakeet Streaming | CoreML | Planned | ~340 MB | True partial ASR | Language coverage depends on variant |
+| ASR | Nemotron 3.5 ASR Streaming 0.6B | MLX/Python | Planned | ~1.5 GB | True cache-aware streaming ASR | Needs mlx-audio bridge; not Swift-native yet |
 | MT | MADLAD-400 3B | MLX Swift | Adapter target ready | ~2.8 GB | First local translation | Quality varies by language pair |
 | MT | NLLB Distilled 600M | Custom/converted | Planned | ~1.6 GB | Better translation candidate | Runtime conversion needed |
 | MT | SeamlessM4T text path | Seamless | Research | ~4.8 GB | Unified research path | Heavy packaging |
@@ -428,11 +430,15 @@ Useful advanced metrics:
    - Add streaming ASR and word timestamps.
    - Compare against Qwen3 ASR for latency and quality.
 
-7. `NLLBTranslatorAdapter`
+7. `NemotronASRAdapter`
+   - Prototype an `mlx-audio` Python bridge for `mlx-community/nemotron-3.5-asr-streaming-0.6b`.
+   - Compare bf16 and 8-bit MLX weights against Qwen compact/quality on the same WAV fixtures.
+
+8. `NLLBTranslatorAdapter`
    - Add a translation quality alternative.
    - Decide whether conversion/runtime cost is acceptable.
 
-8. `SeamlessStreamingExperimentAdapter`
+9. `SeamlessStreamingExperimentAdapter`
    - Prototype a direct S2ST worker around SeamlessStreaming.
    - Keep as research-only until packaging, licensing, and Apple-hardware latency are proven.
 
