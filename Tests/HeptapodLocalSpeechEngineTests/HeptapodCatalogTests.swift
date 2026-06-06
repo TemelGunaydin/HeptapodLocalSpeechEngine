@@ -650,6 +650,53 @@ func textOnlyBufferedTranslationJoinsDuplicateBoundaryWords() async throws {
 }
 
 @Test
+func textOnlyBufferedTranslationJoinsObjectContinuationFragments() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        outputMode: .textOnly
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("Today, we are talking.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("About something.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Let me ask you.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Something.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("When was the last time?".utf8), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(maximumBufferedSegments: 3)
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var translations: [String] = []
+
+    for try await event in events {
+        if case .translation(_, let result) = event {
+            translations.append(result.translation.translatedText)
+        }
+    }
+
+    #expect(translations == [
+        "Today, we are talking about something.",
+        "Let me ask you something. When was the last time?"
+    ])
+}
+
+@Test
 func sentenceBufferedLiveSessionFlushesOneResultAfterSilence() async throws {
     let configuration = HeptapodPipelineConfiguration(
         speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,

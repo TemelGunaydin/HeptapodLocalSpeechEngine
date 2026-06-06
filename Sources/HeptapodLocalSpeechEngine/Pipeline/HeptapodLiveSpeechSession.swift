@@ -737,18 +737,19 @@ private struct TranscriptTranslationNormalizer {
     ]
 
     private static let leadingContinuationWords: Set<String> = [
-        "and", "are", "as", "at", "for", "from", "if", "in", "is",
+        "about", "and", "are", "as", "at", "for", "from", "if", "in", "is",
         "it", "of", "on", "or", "that", "the", "to", "with", "without"
     ]
 
     private static let retainedLeadingContinuationWords: Set<String> = [
-        "and", "are", "as", "at", "for", "from", "if", "in", "is",
+        "about", "and", "are", "as", "at", "for", "from", "if", "in", "is",
         "it", "of", "on", "or", "that", "the", "to", "with", "without"
     ]
 
     private static let continuationPhrases: [[String]] = [
         ["my", "first"],
         ["a", "peaceful"],
+        ["ask", "you"],
         ["i", "feel", "like"],
         ["feel", "like"],
         ["where", "we"]

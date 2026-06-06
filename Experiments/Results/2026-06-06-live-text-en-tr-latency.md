@@ -82,8 +82,8 @@ WAV file produced:
 
 | Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | ASR avg | MT avg | Finished |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `compact-1.0-b3` | compact | 1.0s | 3 | 60 | 59 | 21 | 0.086s | 0.644s | yes |
-| `quality-1.0-b3` | quality | 1.0s | 3 | 60 | 59 | 21 | 0.111s | 0.626s | yes |
+| `compact-1.0-b3` | compact | 1.0s | 3 | 60 | 59 | 21 | 0.077s | 0.639s | yes |
+| `quality-1.0-b3` | quality | 1.0s | 3 | 60 | 59 | 21 | 0.122s | 0.620s | yes |
 
 Runner output was written to a timestamped `/tmp/heptapod-live-benchmarks/...`
 directory and can be regenerated with:
@@ -109,6 +109,7 @@ Tools/run_live_benchmark.py \
 - Retaining live ASR fragments such as `A peaceful`, `I feel like`, and `hold` preserves phrases that MADLAD otherwise drops when they are translated alone.
 - Stream-end flush now forces the remaining retained tail through translation so the final phrase is not silently lost.
 - Joining duplicate boundary words avoids ASR chunk artifacts such as `Where we learn. Learn English.`.
+- Joining object-continuation fragments avoids chunk artifacts such as `Today, we are talking. About something.` and `Let me ask you. Something.`.
 - WAV file tests must be duration-limited and paced like live audio; otherwise ASR can outrun MT and create a large translation backlog.
 
 ## Quality Notes
@@ -165,6 +166,20 @@ to:
 
 ```text
 Where we learn English.
+```
+
+Object-continuation joining improved both ASR paths:
+
+```text
+Today, we are talking. About something.
+Let me ask you. Something.
+```
+
+to:
+
+```text
+Today, we are talking about something.
+Let me ask you something.
 ```
 
 ## Current Recommended Command
