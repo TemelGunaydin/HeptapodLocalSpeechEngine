@@ -45,6 +45,7 @@ struct HeptapodLiveSpeechDemo {
                     shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
                     outputDirectory: options.usesTextOnly ? nil : options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
+                    durationSeconds: options.durationSeconds,
                     endpointing: options.endpointingConfiguration,
                     usesSentenceBuffering: options.usesSentenceBuffering,
                     tracePath: options.tracePath,
@@ -99,6 +100,7 @@ struct HeptapodLiveSpeechDemo {
         if options.usesRealModels {
             return try HeptapodSpeechSwiftAdapterFactory.makePipeline(
                 configuration: options.pipelineConfiguration,
+                asrModelID: options.asrPreset.modelID,
                 chatterboxPythonExecutable: options.ttsPythonExecutable,
                 chatterboxScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
                 chatterboxVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:)),
@@ -121,7 +123,7 @@ struct HeptapodLiveSpeechDemo {
         Heptapod Live Speech Demo
 
         Mode: \(options.usesRealModels ? "real speech-swift adapters" : "preview adapters")
-        ASR:  \(HeptapodModelDescriptor.qwenASRCompact.displayName)
+        ASR:  \(options.asrPreset.descriptor.displayName)
         MT:   \(HeptapodModelDescriptor.madladTranslator.displayName)
         TTS:  \(options.usesTextOnly ? "off" : options.ttsDescriptor.displayName)
         Flow: \(options.usesTextOnly ? "audio chunk source -> live session -> VAD -> ASR -> MT" : "audio chunk source -> live session -> VAD -> ASR -> MT -> TTS -> playback sink")
@@ -154,8 +156,9 @@ struct HeptapodLiveSpeechDemo {
           --audio <path>      Stream an audio file through the live session.
           --microphone        Capture live microphone audio chunks.
           --system-audio      Capture macOS system audio with ScreenCaptureKit.
-          --duration <sec>    Stop microphone capture after this many seconds.
+          --duration <sec>    Stop live/file audio after this many seconds.
           --to <code>         Target language. Default: tr for preview, es for real mode.
+          --asr <name>        Real mode ASR backend: compact or quality. Default: compact.
           --latency <preset>  Live timing preset: low, balanced, or quality. Default: low.
           --chunk-duration <sec>
                               Audio chunk size for live/file demos. Lower is faster but less stable.
@@ -312,6 +315,7 @@ struct HeptapodLiveSpeechDemo {
         shouldPlayOutput: Bool,
         outputDirectory: String?,
         chunkDurationSeconds: Double,
+        durationSeconds: Double?,
         endpointing: HeptapodSentenceEndpointingConfiguration,
         usesSentenceBuffering: Bool,
         tracePath: String?,
@@ -319,7 +323,9 @@ struct HeptapodLiveSpeechDemo {
     ) async throws {
         let source = HeptapodAudioFileChunkSource(
             url: URL(fileURLWithPath: audioPath),
-            chunkDurationSeconds: chunkDurationSeconds
+            chunkDurationSeconds: chunkDurationSeconds,
+            maximumDurationSeconds: durationSeconds,
+            interval: .milliseconds(Int64((chunkDurationSeconds * 1_000).rounded()))
         )
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
         try await runLiveSession(
@@ -408,6 +414,15 @@ struct HeptapodLiveSpeechDemo {
             case .silenceSkipped(let index):
                 print("  VAD: silence, skipped")
                 try trace?.record(event: "silence_skipped", index: index)
+            case .transcript(let index, let transcript):
+                printTranscript(transcript)
+                let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
+                try trace?.record(
+                    event: "transcript_ready",
+                    index: index,
+                    transcriptText: transcript.text,
+                    resultLatencySeconds: resultLatencySeconds
+                )
             case .result(let index, let result):
                 printResult(result)
                 let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
@@ -465,9 +480,12 @@ struct HeptapodLiveSpeechDemo {
     }
 
     private static func printTranslationResult(_ result: HeptapodLiveTranslationResult) {
-        print("  VAD: speech")
-        print("  ASR: \(result.transcript.text)")
         print("  MT:  \(result.translation.translatedText)")
+    }
+
+    private static func printTranscript(_ transcript: HeptapodTranscriptSegment) {
+        print("  VAD: speech")
+        print("  ASR: \(transcript.text)")
     }
 
     private static func speak(_ text: String) {
@@ -495,6 +513,7 @@ private struct DemoOptions {
     let maximumBufferedSegments: Int
     let usesPunctuationEndpoint: Bool
     let usesASRStabilization: Bool
+    let asrPreset: DemoASRPreset
     let targetLanguageCode: String?
     let ttsBackend: DemoTTSBackend
     let ttsScriptPath: String?
@@ -523,6 +542,7 @@ private struct DemoOptions {
         var maximumBufferedSegments: Int?
         var usesPunctuationEndpoint = false
         var usesASRStabilization: Bool?
+        var asrPreset = DemoASRPreset.compact
         var targetLanguageCode: String?
         var ttsBackend = DemoTTSBackend.kokoro
         var ttsScriptPath: String?
@@ -585,6 +605,12 @@ private struct DemoOptions {
                 usesASRStabilization = false
             case "--to":
                 targetLanguageCode = try Self.value(after: argument, in: arguments, at: &index)
+            case "--asr":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let preset = DemoASRPreset(rawValue: rawValue.lowercased()) else {
+                    throw DemoError.invalidASRPreset(rawValue)
+                }
+                asrPreset = preset
             case "--tts":
                 let rawValue = try Self.value(after: argument, in: arguments, at: &index)
                 guard let backend = DemoTTSBackend(rawValue: rawValue.lowercased()) else {
@@ -637,7 +663,8 @@ private struct DemoOptions {
         self.chunkDurationSeconds = chunkDurationSeconds ?? latencyPreset.chunkDurationSeconds
         self.maximumBufferedSegments = maximumBufferedSegments ?? latencyPreset.maximumBufferedSegments
         self.usesPunctuationEndpoint = usesPunctuationEndpoint || latencyPreset.usesPunctuationEndpoint
-        self.usesASRStabilization = usesASRStabilization ?? latencyPreset.usesASRStabilization
+        self.usesASRStabilization = usesASRStabilization ?? (usesTextOnly ? false : latencyPreset.usesASRStabilization)
+        self.asrPreset = asrPreset
         self.targetLanguageCode = targetLanguageCode
         self.ttsBackend = ttsBackend
         self.ttsScriptPath = ttsScriptPath
@@ -682,7 +709,7 @@ private struct DemoOptions {
 
     var pipelineConfiguration: HeptapodPipelineConfiguration {
         HeptapodPipelineConfiguration(
-            speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+            speechRecognitionModelID: asrPreset.descriptor.id,
             textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
             speechSynthesisModelID: ttsDescriptor.id,
             voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
@@ -719,6 +746,29 @@ private struct DemoOptions {
 private enum DemoTTSBackend: String {
     case kokoro
     case chatterbox
+}
+
+private enum DemoASRPreset: String {
+    case compact
+    case quality
+
+    var descriptor: HeptapodModelDescriptor {
+        switch self {
+        case .compact:
+            HeptapodModelDescriptor.qwenASRCompact
+        case .quality:
+            HeptapodModelDescriptor.qwenASRHighQuality
+        }
+    }
+
+    var modelID: String {
+        switch self {
+        case .compact:
+            HeptapodQwen3ASRAdapter.compactModelID
+        case .quality:
+            HeptapodQwen3ASRAdapter.highQualityModelID
+        }
+    }
 }
 
 private enum DemoLatencyPreset: String {
@@ -879,6 +929,7 @@ private struct CompositePlaybackSink: HeptapodSpeechPlaybackSink {
 }
 
 private enum DemoError: LocalizedError {
+    case invalidASRPreset(String)
     case invalidDuration(String)
     case invalidLatencyPreset(String)
     case invalidPositiveOption(String, String)
@@ -894,6 +945,8 @@ private enum DemoError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .invalidASRPreset(let value):
+            "Invalid ASR preset: \(value). Use compact or quality."
         case .invalidDuration(let value):
             "Invalid duration: \(value)."
         case .invalidLatencyPreset(let value):

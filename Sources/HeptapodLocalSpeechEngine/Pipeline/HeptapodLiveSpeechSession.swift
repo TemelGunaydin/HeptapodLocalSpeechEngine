@@ -11,12 +11,13 @@ public protocol HeptapodSpeechPlaybackSink: Sendable {
 public enum HeptapodLiveSpeechEvent: Sendable {
     case segmentStarted(index: Int)
     case silenceSkipped(index: Int)
+    case transcript(index: Int, HeptapodTranscriptSegment)
     case translation(index: Int, HeptapodLiveTranslationResult)
     case result(index: Int, HeptapodSpeechToSpeechResult)
     case playbackCompleted(index: Int)
 }
 
-public enum HeptapodLiveOutputMode: Sendable {
+public enum HeptapodLiveOutputMode: Sendable, Equatable {
     case speech
     case textOnly
 }
@@ -141,6 +142,7 @@ public actor HeptapodLiveSpeechSession {
                             continuation.yield(.result(index: index, result))
                             await playbackQueue.enqueue(index: index, speech: result.speech)
                         case .textOnly:
+                            continuation.yield(.transcript(index: index, transcript))
                             let translation = try await pipeline.translateTranscript(
                                 transcript,
                                 sourceLanguageCode: sourceLanguageCode,
@@ -206,15 +208,21 @@ public actor HeptapodLiveSpeechSession {
                         if endpointing.asrStabilization.isEnabled {
                             guard try await pipeline.containsSpeech(chunk) else {
                                 if let finalTranscript = asrStabilizer.flushLatest(fallbackLanguageCode: sourceLanguageCode) {
+                                    if outputMode == .textOnly {
+                                        continuation.yield(.transcript(index: index, finalTranscript))
+                                    }
                                     pending.append(finalTranscript)
                                 }
                                 if endpointing.flushOnSilence, pending.hasText {
-                                    await flushPending(
+                                    let didFlush = await flushPending(
                                         &pending,
                                         at: index,
                                         synthesisQueue: synthesisQueue,
                                         sourceLanguageCode: sourceLanguageCode
                                     )
+                                    if didFlush == false {
+                                        continuation.yield(.silenceSkipped(index: index))
+                                    }
                                 } else {
                                     continuation.yield(.silenceSkipped(index: index))
                                 }
@@ -239,12 +247,15 @@ public actor HeptapodLiveSpeechSession {
 
                         guard let transcript else {
                             if endpointing.flushOnSilence, pending.hasText {
-                                await flushPending(
+                                let didFlush = await flushPending(
                                     &pending,
                                     at: index,
                                     synthesisQueue: synthesisQueue,
                                     sourceLanguageCode: sourceLanguageCode
                                 )
+                                if didFlush == false {
+                                    continuation.yield(.silenceSkipped(index: index))
+                                }
                             } else if isSpeechBuffered {
                                 continue
                             } else {
@@ -253,6 +264,9 @@ public actor HeptapodLiveSpeechSession {
                             continue
                         }
 
+                        if outputMode == .textOnly {
+                            continuation.yield(.transcript(index: index, transcript))
+                        }
                         pending.append(transcript)
 
                         if shouldFlush(pending, endpointing: endpointing) {
@@ -266,6 +280,9 @@ public actor HeptapodLiveSpeechSession {
                     }
 
                     if let finalTranscript = asrStabilizer.flushLatest(fallbackLanguageCode: sourceLanguageCode) {
+                        if outputMode == .textOnly {
+                            continuation.yield(.transcript(index: index, finalTranscript))
+                        }
                         pending.append(finalTranscript)
                     }
                     if endpointing.flushOnStreamEnd, pending.hasText {
@@ -309,6 +326,10 @@ private struct PendingSentence {
         parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    var translationText: String {
+        TranscriptTranslationNormalizer.normalized(text)
+    }
+
     var wordCount: Int {
         text.split { $0.isWhitespace || $0.isNewline }.count
     }
@@ -331,17 +352,351 @@ private struct PendingSentence {
         segmentCount += 1
     }
 
-    mutating func drainTranscript(fallbackLanguageCode: String?) -> HeptapodTranscriptSegment {
+    mutating func drainTranscript(fallbackLanguageCode: String?) -> HeptapodTranscriptSegment? {
+        let split = TranscriptTranslationNormalizer.readyTextAndRemainder(text)
+        let retainedLanguageCode = languageCode
+
+        parts.removeAll()
+        if split.remainderText.isEmpty == false {
+            parts.append(split.remainderText)
+            languageCode = retainedLanguageCode
+            segmentCount = 0
+        } else {
+            languageCode = nil
+            segmentCount = 0
+        }
+
+        guard split.readyText.isEmpty == false else {
+            return nil
+        }
+
         let segment = HeptapodTranscriptSegment(
-            text: text,
-            languageCode: languageCode ?? fallbackLanguageCode,
+            text: split.readyText,
+            languageCode: retainedLanguageCode ?? fallbackLanguageCode,
             isFinal: true
         )
-        parts.removeAll()
-        languageCode = nil
-        segmentCount = 0
         return segment
     }
+}
+
+private struct TranscriptTranslationNormalizer {
+    struct Split {
+        let readyText: String
+        let remainderText: String
+    }
+
+    private struct Fragment {
+        let text: String
+        let punctuation: Character?
+
+        var wordCount: Int {
+            words(in: text).count
+        }
+    }
+
+    static func normalized(_ text: String) -> String {
+        let fragments = collapseDuplicatePrefixes(fragments(in: text))
+        return normalized(fragments)
+    }
+
+    static func readyTextAndRemainder(_ text: String) -> Split {
+        let fragments = collapseDuplicatePrefixes(fragments(in: text))
+        guard fragments.isEmpty == false else {
+            return Split(
+                readyText: "",
+                remainderText: text.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        guard hasIncompleteTail(fragments) else {
+            return Split(readyText: normalized(fragments), remainderText: "")
+        }
+
+        let tailStartIndex = incompleteTailStartIndex(in: fragments)
+        let readyFragments = Array(fragments[..<tailStartIndex])
+        let remainderFragments = Array(fragments[tailStartIndex...])
+        return Split(
+            readyText: normalized(readyFragments),
+            remainderText: normalized(remainderFragments)
+        )
+    }
+
+    private static func normalized(_ fragments: [Fragment]) -> String {
+        guard fragments.isEmpty == false else {
+            return ""
+        }
+        var output: [String] = []
+        var carry = ""
+
+        for index in fragments.indices {
+            let fragment = fragments[index]
+            let next = fragments.index(after: index) < fragments.endIndex
+                ? fragments[fragments.index(after: index)]
+                : nil
+            let fragmentText = carry.isEmpty
+                ? fragment.text
+                : normalizedContinuationText(fragment.text, after: carry)
+            carry = carry.isEmpty ? fragmentText : "\(carry) \(fragmentText)"
+
+            guard shouldJoin(fragment, with: next) else {
+                output.append(withTerminalPunctuation(carry, punctuation: fragment.punctuation))
+                carry = ""
+                continue
+            }
+        }
+
+        if carry.isEmpty == false {
+            output.append(carry)
+        }
+
+        return output
+            .joined(separator: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func hasIncompleteTail(_ fragments: [Fragment]) -> Bool {
+        guard let last = fragments.last,
+              let lastWord = lastWord(in: last.text) else {
+            return false
+        }
+        return trailingContinuationWords.contains(lastWord)
+            || endsWithContinuationPhrase(last.text)
+    }
+
+    private static func incompleteTailStartIndex(in fragments: [Fragment]) -> Array<Fragment>.Index {
+        var currentIndex = fragments.index(before: fragments.endIndex)
+        while currentIndex > fragments.startIndex {
+            let previousIndex = fragments.index(before: currentIndex)
+            guard shouldRetainIncompleteTail(fragments[previousIndex], with: fragments[currentIndex]) else {
+                break
+            }
+            currentIndex = previousIndex
+        }
+        return currentIndex
+    }
+
+    private static func fragments(in text: String) -> [Fragment] {
+        var result: [Fragment] = []
+        var current = ""
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let character = text[index]
+            if isTerminalPunctuation(character),
+               isSentenceBoundary(after: index, in: text) {
+                appendFragment(current, punctuation: character, to: &result)
+                current.removeAll()
+            } else {
+                current.append(character)
+            }
+            index = text.index(after: index)
+        }
+
+        appendFragment(current, punctuation: nil, to: &result)
+        return result
+    }
+
+    private static func appendFragment(
+        _ text: String,
+        punctuation: Character?,
+        to result: inout [Fragment]
+    ) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return
+        }
+        result.append(Fragment(text: trimmed, punctuation: punctuation))
+    }
+
+    private static func collapseDuplicatePrefixes(_ fragments: [Fragment]) -> [Fragment] {
+        var result: [Fragment] = []
+        for fragment in fragments {
+            if let last = result.last {
+                let lastComparable = comparable(last.text)
+                let currentComparable = comparable(fragment.text)
+                if currentComparable == lastComparable {
+                    continue
+                }
+                if last.wordCount <= 3,
+                   currentComparable.hasPrefix("\(lastComparable) ") {
+                    result.removeLast()
+                }
+            }
+            result.append(fragment)
+        }
+        return result
+    }
+
+    private static func shouldJoin(_ fragment: Fragment, with next: Fragment?) -> Bool {
+        guard let next else {
+            return false
+        }
+        guard fragment.punctuation == "." || fragment.punctuation == nil else {
+            return false
+        }
+        if let last = lastWord(in: fragment.text),
+           trailingContinuationWords.contains(last) {
+            return true
+        }
+        if endsWithContinuationPhrase(fragment.text) {
+            return true
+        }
+        if let first = firstWord(in: next.text),
+           leadingContinuationWords.contains(first) {
+            return true
+        }
+        return false
+    }
+
+    private static func shouldRetainIncompleteTail(_ fragment: Fragment, with next: Fragment) -> Bool {
+        guard fragment.punctuation == "." || fragment.punctuation == nil else {
+            return false
+        }
+        if let last = lastWord(in: fragment.text),
+           trailingContinuationWords.contains(last) {
+            return true
+        }
+        if endsWithContinuationPhrase(fragment.text) {
+            return true
+        }
+        if let first = firstWord(in: next.text),
+           retainedLeadingContinuationWords.contains(first) {
+            return true
+        }
+        return false
+    }
+
+    private static func withTerminalPunctuation(_ text: String, punctuation: Character?) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let punctuation else {
+            return trimmed
+        }
+        guard trimmed.last.map(isTerminalPunctuation) != true else {
+            return trimmed
+        }
+        return "\(trimmed)\(punctuation)"
+    }
+
+    private static func removingDuplicateBoundaryWord(from next: String, after current: String) -> String {
+        guard let currentLast = lastWord(in: current),
+              let nextFirst = firstWord(in: next),
+              currentLast == nextFirst else {
+            return next
+        }
+        return removingFirstWord(from: next)
+    }
+
+    private static func normalizedContinuationText(_ next: String, after current: String) -> String {
+        let withoutDuplicateBoundary = removingDuplicateBoundaryWord(from: next, after: current)
+        if let last = lastWord(in: current),
+           trailingContinuationWords.contains(last) {
+            return lowercasingFirstWord(in: withoutDuplicateBoundary)
+        }
+        if endsWithContinuationPhrase(current) {
+            return lowercasingFirstWord(in: withoutDuplicateBoundary)
+        }
+        guard let first = firstWord(in: withoutDuplicateBoundary),
+              leadingContinuationWords.contains(first) else {
+            return withoutDuplicateBoundary
+        }
+        return lowercasingFirstWord(in: withoutDuplicateBoundary)
+    }
+
+    private static func lowercasingFirstWord(in text: String) -> String {
+        guard let range = firstWordRange(in: text) else {
+            return text
+        }
+        var result = text
+        result.replaceSubrange(range, with: result[range].lowercased())
+        return result
+    }
+
+    private static func removingFirstWord(from text: String) -> String {
+        guard let range = firstWordRange(in: text) else {
+            return text
+        }
+        var result = text
+        result.removeSubrange(range)
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func words(in text: String) -> [String] {
+        text.split { character in
+            character.isLetter == false && character.isNumber == false && character != "'"
+        }
+        .map { $0.lowercased() }
+    }
+
+    private static func comparable(_ text: String) -> String {
+        words(in: text).joined(separator: " ")
+    }
+
+    private static func endsWithContinuationPhrase(_ text: String) -> Bool {
+        let wordList = words(in: text)
+        return wordList.suffix(2) == ["my", "first"]
+    }
+
+    private static func firstWord(in text: String) -> String? {
+        words(in: text).first
+    }
+
+    private static func lastWord(in text: String) -> String? {
+        words(in: text).last
+    }
+
+    private static func firstWordRange(in text: String) -> Range<String.Index>? {
+        var start: String.Index?
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if character.isLetter || character.isNumber || character == "'" {
+                start = index
+                break
+            }
+            index = text.index(after: index)
+        }
+        guard let start else {
+            return nil
+        }
+
+        var end = start
+        while end < text.endIndex {
+            let character = text[end]
+            guard character.isLetter || character.isNumber || character == "'" else {
+                break
+            }
+            end = text.index(after: end)
+        }
+        return start..<end
+    }
+
+    private static func isTerminalPunctuation(_ character: Character) -> Bool {
+        character == "." || character == "?" || character == "!"
+    }
+
+    private static func isSentenceBoundary(after index: String.Index, in text: String) -> Bool {
+        let nextIndex = text.index(after: index)
+        guard nextIndex < text.endIndex else {
+            return true
+        }
+        return text[nextIndex].isWhitespace
+    }
+
+    private static let trailingContinuationWords: Set<String> = [
+        "a", "an", "and", "are", "as", "at", "but", "for", "from", "if",
+        "in", "is", "it", "just", "keep", "my", "of", "on", "or", "that",
+        "the", "this", "to", "when", "with", "without", "your"
+    ]
+
+    private static let leadingContinuationWords: Set<String> = [
+        "and", "are", "as", "at", "for", "from", "if", "in", "is",
+        "it", "of", "on", "or", "that", "the", "to", "with", "without"
+    ]
+
+    private static let retainedLeadingContinuationWords: Set<String> = [
+        "and", "are", "as", "at", "for", "from", "if", "in", "is",
+        "it", "of", "on", "or", "that", "the", "to", "with", "without"
+    ]
 }
 
 private func shouldFlush(
@@ -362,14 +717,18 @@ private func shouldFlush(
     return false
 }
 
+@discardableResult
 private func flushPending(
     _ pending: inout PendingSentence,
     at index: Int,
     synthesisQueue: LiveSynthesisQueue,
     sourceLanguageCode: String?
-) async {
-    let transcript = pending.drainTranscript(fallbackLanguageCode: sourceLanguageCode)
+) async -> Bool {
+    guard let transcript = pending.drainTranscript(fallbackLanguageCode: sourceLanguageCode) else {
+        return false
+    }
     await synthesisQueue.enqueue(index: index, transcript: transcript)
+    return true
 }
 
 private struct SlidingASRStabilizer {

@@ -300,7 +300,7 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 | --- | --- | --- | --- | ---: | --- | --- |
 | VAD | Silero VAD | CoreML | Adapter target ready | ~8 MB | Silence gating | No transcription |
 | ASR | Qwen3 ASR 0.6B 4-bit | MLX Swift | Adapter target ready | ~760 MB | Starter local mode | Segment-based, lower noisy-audio accuracy |
-| ASR | Qwen3 ASR 1.7B 8-bit | MLX Swift | Runnable candidate, adapter pending | ~3.6 GB | Higher ASR quality | More memory and disk |
+| ASR | Qwen3 ASR 1.7B 8-bit | MLX Swift | Adapter target ready | ~3.6 GB | Higher ASR quality | More memory and disk |
 | ASR | WhisperKit Base | CoreML/WhisperKit | Planned | ~220 MB | Streaming ASR, timestamps | Separate model management |
 | ASR | WhisperKit Large v3 | CoreML/WhisperKit | Planned | ~3.4 GB | Maximum ASR quality | Heavy |
 | ASR | Parakeet Streaming | CoreML | Planned | ~340 MB | True partial ASR | Language coverage depends on variant |

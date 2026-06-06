@@ -5,6 +5,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
     public static let implementedModelIDs: Set<String> = [
         HeptapodModelDescriptor.sileroVAD.id,
         HeptapodModelDescriptor.qwenASRCompact.id,
+        HeptapodModelDescriptor.qwenASRHighQuality.id,
         HeptapodModelDescriptor.madladTranslator.id,
         HeptapodModelDescriptor.chatterboxTTS.id,
         HeptapodModelDescriptor.kokoroTTS.id
@@ -42,11 +43,18 @@ public enum HeptapodSpeechSwiftAdapterFactory {
             vad = nil
         }
 
+        let recognizerDescriptor = catalog.model(id: configuration.speechRecognitionModelID)
+            ?? HeptapodModelDescriptor.qwenASRCompact
+
         return try HeptapodSpeechToSpeechPipeline(
             configuration: configuration,
             catalog: catalog,
             vad: vad,
-            recognizer: HeptapodQwen3ASRAdapter(modelID: asrModelID, offlineMode: offlineMode),
+            recognizer: HeptapodQwen3ASRAdapter(
+                descriptor: recognizerDescriptor,
+                modelID: asrModelID,
+                offlineMode: offlineMode
+            ),
             translator: HeptapodMADLADTranslatorAdapter(modelID: translationModelID, offlineMode: offlineMode),
             synthesizer: makeSynthesizer(
                 for: configuration.speechSynthesisModelID,

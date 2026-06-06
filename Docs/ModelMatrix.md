@@ -10,7 +10,7 @@ speech output.
 | --- | --- | --- | ---: | --- |
 | VAD | Silero VAD | Adapter target ready | ~8 MB | Low-cost silence gate |
 | ASR | Qwen3 ASR 0.6B 4-bit | Adapter target ready | ~760 MB | Good default |
-| ASR | Qwen3 ASR 1.7B 8-bit | Runnable candidate, adapter pending | ~3.6 GB | Higher accuracy |
+| ASR | Qwen3 ASR 1.7B 8-bit | Adapter target ready | ~3.6 GB | Higher accuracy |
 | ASR | WhisperKit Base | Planned | ~220 MB | Streaming/timestamps candidate |
 | ASR | WhisperKit Large v3 | Planned | ~3.4 GB | Heavy high-quality ASR |
 | ASR | Parakeet Streaming | Planned | ~340 MB | True partial ASR candidate |

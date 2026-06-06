@@ -3,7 +3,9 @@ import HeptapodLocalSpeechEngine
 import Qwen3ASR
 
 public actor HeptapodQwen3ASRAdapter: HeptapodSpeechRecognizer {
-    public static let defaultModelID = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
+    public static let compactModelID = "aufklarer/Qwen3-ASR-0.6B-MLX-4bit"
+    public static let highQualityModelID = "aufklarer/Qwen3-ASR-1.7B-MLX-8bit"
+    public static let defaultModelID = compactModelID
     public nonisolated let descriptor: HeptapodModelDescriptor
 
     private let modelID: String

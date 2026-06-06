@@ -10,6 +10,20 @@ Use this folder to store reproducible local speech translation experiments.
 
 Do not commit private user audio or copyrighted long-form media.
 
+## Trace Summaries
+
+Live demo JSONL traces can be summarized as a GitHub-ready Markdown table:
+
+```bash
+Tools/trace_summary.py \
+  compact=/tmp/heptapod-audio-compact-v10.jsonl \
+  quality=/tmp/heptapod-audio-quality-v1.jsonl \
+  --examples 1
+```
+
+Use labels in the form `name=/path/to/trace.jsonl` when comparing multiple
+ASR models or chunk settings.
+
 ## Result Template
 
 ```markdown

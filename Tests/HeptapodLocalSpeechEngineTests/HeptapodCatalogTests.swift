@@ -102,6 +102,21 @@ func speechSwiftFactoryReportsStarterPipelineRunnable() {
 }
 
 @Test
+func speechSwiftFactoryReportsQualityASRRunnable() {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRHighQuality.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
+
+    #expect(readiness.canRunInference)
+    #expect(readiness.unavailableDescriptors.isEmpty)
+    #expect(readiness.selectedDescriptors.map(\.id).contains(HeptapodModelDescriptor.qwenASRHighQuality.id))
+}
+
+@Test
 func speechSwiftFactoryReportsChatterboxPipelineRunnable() {
     let configuration = HeptapodPipelineConfiguration(
         speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
@@ -120,6 +135,15 @@ func speechSwiftFactoryReportsChatterboxPipelineRunnable() {
 func speechSwiftFactoryBuildsPipelineWithoutLoadingModels() throws {
     _ = try HeptapodSpeechSwiftAdapterFactory.makePipeline()
     _ = try HeptapodSpeechSwiftAdapterFactory.makePipeline(configuration: HeptapodModelCatalog.starterPipeline)
+    _ = try HeptapodSpeechSwiftAdapterFactory.makePipeline(
+        configuration: HeptapodPipelineConfiguration(
+            speechRecognitionModelID: HeptapodModelDescriptor.qwenASRHighQuality.id,
+            textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+            speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+            voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+        ),
+        asrModelID: HeptapodQwen3ASRAdapter.highQualityModelID
+    )
 }
 
 @Test
@@ -218,6 +242,8 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
         case .result(let index, let result):
             resultIndexes.append(index)
             translations.append(result.translation.translatedText)
+        case .transcript:
+            break
         case .translation:
             break
         case .playbackCompleted(let index):
@@ -271,6 +297,8 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
             eventNames.append("segment-\(index)")
         case .result(let index, _):
             eventNames.append("result-\(index)")
+        case .transcript:
+            break
         case .translation:
             break
         case .playbackCompleted(let index):
@@ -315,13 +343,19 @@ func liveSessionTextOnlyTranslatesWithoutSynthesisOrPlayback() async throws {
     )
 
     let events = await session.run(chunks: source.chunks())
+    var transcripts: [String] = []
     var translations: [String] = []
     var playbackIndexes: [Int] = []
+    var eventNames: [String] = []
 
     for try await event in events {
         switch event {
+        case .transcript(_, let transcript):
+            transcripts.append(transcript.text)
+            eventNames.append("transcript")
         case .translation(_, let result):
             translations.append(result.translation.translatedText)
+            eventNames.append("translation")
         case .playbackCompleted(let index):
             playbackIndexes.append(index)
         case .segmentStarted, .silenceSkipped, .result:
@@ -329,9 +363,168 @@ func liveSessionTextOnlyTranslatesWithoutSynthesisOrPlayback() async throws {
         }
     }
 
+    #expect(transcripts == ["first phrase"])
     #expect(translations == ["first phrase"])
+    #expect(eventNames == ["transcript", "translation"])
     #expect(playbackIndexes.isEmpty)
     #expect(await playbackSink.playedCount() == 0)
+}
+
+@Test
+func textOnlyBufferedTranslationNormalizesFragmentedTranscript() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        outputMode: .textOnly
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("People.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("People keep asking.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("My first tip.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Is just to.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("listen.".utf8), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(maximumBufferedSegments: 5)
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var transcripts: [String] = []
+    var translations: [String] = []
+
+    for try await event in events {
+        switch event {
+        case .transcript(_, let transcript):
+            transcripts.append(transcript.text)
+        case .translation(_, let result):
+            translations.append(result.translation.translatedText)
+        case .segmentStarted, .silenceSkipped, .result, .playbackCompleted:
+            break
+        }
+    }
+
+    #expect(transcripts == [
+        "People.",
+        "People keep asking.",
+        "My first tip.",
+        "Is just to.",
+        "listen."
+    ])
+    #expect(translations == [
+        "People keep asking. My first tip is just to listen."
+    ])
+}
+
+@Test
+func textOnlyBufferedTranslationCarriesIncompleteTailBetweenFlushes() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        outputMode: .textOnly
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("Coming soon.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("But my aim here.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Is just to.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("get the advice across.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("To you, as quickly.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("And simply, as.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("possible.".utf8), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(maximumBufferedSegments: 3)
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var translations: [String] = []
+
+    for try await event in events {
+        if case .translation(_, let result) = event {
+            translations.append(result.translation.translatedText)
+        }
+    }
+
+    #expect(translations == [
+        "Coming soon.",
+        "But my aim here is just to get the advice across to you, as quickly and simply, as possible."
+    ])
+}
+
+@Test
+func textOnlyBufferedTranslationRetainsCommonContinuationTails() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        outputMode: .textOnly
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("People keep.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Asking.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Now I understand that when.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("You are faced.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("So my first.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Tip.".utf8), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(maximumBufferedSegments: 1)
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var translations: [String] = []
+
+    for try await event in events {
+        if case .translation(_, let result) = event {
+            translations.append(result.translation.translatedText)
+        }
+    }
+
+    #expect(translations == [
+        "People keep asking.",
+        "Now I understand that when you are faced.",
+        "So my first tip."
+    ])
 }
 
 @Test
@@ -372,6 +565,8 @@ func sentenceBufferedLiveSessionFlushesOneResultAfterSilence() async throws {
         switch event {
         case .result(_, let result):
             resultTexts.append(result.transcript.text)
+        case .transcript:
+            break
         case .translation:
             break
         case .playbackCompleted(let index):
@@ -468,6 +663,8 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
             eventNames.append("segment-\(index)")
         case .result(let index, _):
             eventNames.append("result-\(index)")
+        case .transcript:
+            break
         case .translation:
             break
         case .silenceSkipped, .playbackCompleted:
