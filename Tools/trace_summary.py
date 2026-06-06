@@ -187,6 +187,48 @@ def markdown_examples(summary: TraceSummary, limit: int) -> str:
     return "\n".join(lines).rstrip()
 
 
+def markdown_cell(value: object) -> str:
+    return str(value).replace("\n", " ").replace("|", r"\|").strip()
+
+
+def markdown_side_by_side_examples(summaries: list[TraceSummary], limit: int) -> str:
+    if limit <= 0:
+        return ""
+
+    example_count = min(limit, max((len(summary.examples) for summary in summaries), default=0))
+    if example_count == 0:
+        return ""
+
+    sections: list[str] = []
+    for example_index in range(example_count):
+        sections.extend(
+            [
+                f"### Translation {example_index + 1}",
+                "",
+                "| Trace | Segment | ASR | MT |",
+                "| --- | ---: | --- | --- |",
+            ]
+        )
+        for summary in summaries:
+            if example_index >= len(summary.examples):
+                sections.append(f"| {markdown_cell(summary.label)} | n/a | n/a | n/a |")
+                continue
+
+            example = summary.examples[example_index]
+            segment = example.index if example.index is not None else "?"
+            sections.append(
+                "| {label} | {segment} | {transcript} | {translation} |".format(
+                    label=markdown_cell(summary.label),
+                    segment=segment,
+                    transcript=markdown_cell(example.transcript),
+                    translation=markdown_cell(example.translation),
+                )
+            )
+        sections.append("")
+
+    return "\n".join(sections).rstrip()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Summarize Heptapod JSONL trace files as Markdown."
@@ -203,6 +245,12 @@ def main() -> None:
         default=0,
         help="Include the first N translation examples per trace.",
     )
+    parser.add_argument(
+        "--compare-examples",
+        type=int,
+        default=0,
+        help="Include the first N translation examples side by side across traces.",
+    )
     args = parser.parse_args()
 
     summaries = [load_trace(path, label=label) for label, path in args.traces]
@@ -216,6 +264,14 @@ def main() -> None:
             if rendered:
                 print()
                 print(rendered)
+
+    if args.compare_examples > 0:
+        rendered = markdown_side_by_side_examples(summaries, args.compare_examples)
+        if rendered:
+            print()
+            print("## Side-By-Side Examples")
+            print()
+            print(rendered)
 
 
 if __name__ == "__main__":

@@ -18,11 +18,13 @@ Live demo JSONL traces can be summarized as a GitHub-ready Markdown table:
 Tools/trace_summary.py \
   compact=/tmp/heptapod-audio-compact-v10.jsonl \
   quality=/tmp/heptapod-audio-quality-v1.jsonl \
-  --examples 1
+  --examples 1 \
+  --compare-examples 3
 ```
 
 Use labels in the form `name=/path/to/trace.jsonl` when comparing multiple
-ASR models or chunk settings.
+ASR models or chunk settings. `--compare-examples` prints matching translation
+events side by side so ASR and MT regressions are easier to inspect.
 
 ## Live Benchmark Runner
 
@@ -32,7 +34,8 @@ Run a repeatable text-only benchmark matrix from one WAV file:
 Tools/run_live_benchmark.py \
   --audio /Users/temelgunaydin/Downloads/output.wav \
   --duration 60 \
-  --preset quick
+  --preset quick \
+  --compare-examples 3
 ```
 
 The runner builds `HeptapodLiveSpeechDemo`, writes each trace/log under a

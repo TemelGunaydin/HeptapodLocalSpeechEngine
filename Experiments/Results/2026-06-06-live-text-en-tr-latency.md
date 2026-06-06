@@ -61,7 +61,8 @@ Tools/trace_summary.py \
   compact15=/tmp/heptapod-audio-compact-chunk15-v1.jsonl \
   quality=/tmp/heptapod-audio-quality-v1.jsonl \
   quality12=/tmp/heptapod-audio-quality-chunk12-v1.jsonl \
-  quality15=/tmp/heptapod-audio-quality-chunk15-v1.jsonl
+  quality15=/tmp/heptapod-audio-quality-chunk15-v1.jsonl \
+  --compare-examples 3
 ```
 
 | Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | ASR avg | MT avg | Notes |
@@ -92,7 +93,8 @@ Tools/run_live_benchmark.py \
   --audio /Users/temelgunaydin/Downloads/output.wav \
   --duration 60 \
   --preset quick \
-  --examples 3
+  --examples 3 \
+  --compare-examples 3
 ```
 
 ## Findings

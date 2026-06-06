@@ -169,6 +169,7 @@ def make_report(
     cases: list[BenchmarkCase],
     results: list[RunResult],
     examples: int,
+    compare_examples: int,
 ) -> Path:
     report_path = output_dir / "report.md"
     summary = ""
@@ -180,6 +181,8 @@ def make_report(
             *[f"{result.case.label}={result.trace_path}" for result in successful],
             "--examples",
             str(examples),
+            "--compare-examples",
+            str(compare_examples),
         ]
         completed = subprocess.run(
             summary_command,
@@ -308,6 +311,12 @@ def main() -> int:
         help="Custom case: label:asr:chunk_duration:max_buffered_segments.",
     )
     parser.add_argument("--examples", type=int, default=2, help="Examples per trace in report.")
+    parser.add_argument(
+        "--compare-examples",
+        type=int,
+        default=3,
+        help="Side-by-side examples across traces in report.",
+    )
     parser.add_argument("--skip-build", action="store_true", help="Do not run swift build first.")
     parser.add_argument("--keep-going", action="store_true", help="Run remaining cases after a failure.")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them.")
@@ -357,6 +366,7 @@ def main() -> int:
         cases=cases,
         results=results,
         examples=args.examples,
+        compare_examples=args.compare_examples,
     )
     print(report_path)
 
