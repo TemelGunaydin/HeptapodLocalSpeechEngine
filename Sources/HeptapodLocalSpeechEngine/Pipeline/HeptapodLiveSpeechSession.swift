@@ -555,6 +555,9 @@ private struct TranscriptTranslationNormalizer {
         if shouldJoinObjectPhrase(fragment, with: next) {
             return true
         }
+        if shouldJoinDuplicateBoundary(fragment, with: next) {
+            return true
+        }
         if let first = firstWord(in: next.text),
            leadingContinuationWords.contains(first) {
             return true
@@ -671,6 +674,16 @@ private struct TranscriptTranslationNormalizer {
         return objectLeadingWords.contains(first)
     }
 
+    private static func shouldJoinDuplicateBoundary(_ fragment: Fragment, with next: Fragment) -> Bool {
+        guard fragment.wordCount >= 2,
+              next.wordCount >= 2,
+              let last = lastWord(in: fragment.text),
+              let first = firstWord(in: next.text) else {
+            return false
+        }
+        return last == first
+    }
+
     private static func firstWord(in text: String) -> String? {
         words(in: text).first
     }
@@ -720,7 +733,7 @@ private struct TranscriptTranslationNormalizer {
     private static let trailingContinuationWords: Set<String> = [
         "a", "an", "and", "are", "as", "at", "but", "for", "from", "if",
         "in", "is", "it", "just", "keep", "my", "of", "on", "or", "that",
-        "the", "this", "to", "when", "with", "without", "your"
+        "the", "this", "through", "to", "when", "with", "without", "your"
     ]
 
     private static let leadingContinuationWords: Set<String> = [
@@ -737,7 +750,8 @@ private struct TranscriptTranslationNormalizer {
         ["my", "first"],
         ["a", "peaceful"],
         ["i", "feel", "like"],
-        ["feel", "like"]
+        ["feel", "like"],
+        ["where", "we"]
     ]
 
     private static let objectExpectingWords: Set<String> = [

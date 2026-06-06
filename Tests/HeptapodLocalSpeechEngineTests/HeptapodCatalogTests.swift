@@ -557,6 +557,9 @@ func textOnlyBufferedTranslationRetainsLiveASRFragmentTails() async throws {
             HeptapodAudioChunk(pcm16: Data("Like I should lower my voice.".utf8), sampleRate: 16_000),
             HeptapodAudioChunk(pcm16: Data("I should hold.".utf8), sampleRate: 16_000),
             HeptapodAudioChunk(pcm16: Data("A cup of tea.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Where we.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Learn English through.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Through real daily life conversation.".utf8), sampleRate: 16_000),
             HeptapodAudioChunk(pcm16: Data("Please hold.".utf8), sampleRate: 16_000)
         ]
     )
@@ -576,7 +579,52 @@ func textOnlyBufferedTranslationRetainsLiveASRFragmentTails() async throws {
         "A peaceful day.",
         "I feel like I should lower my voice.",
         "I should hold a cup of tea.",
+        "Where we learn English through real daily life conversation.",
         "Please hold."
+    ])
+}
+
+@Test
+func textOnlyBufferedTranslationJoinsDuplicateBoundaryWords() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        outputMode: .textOnly
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("Sleep podcast.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Where we learn.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Learn English.".utf8), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(maximumBufferedSegments: 3)
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var translations: [String] = []
+
+    for try await event in events {
+        if case .translation(_, let result) = event {
+            translations.append(result.translation.translatedText)
+        }
+    }
+
+    #expect(translations == [
+        "Sleep podcast. Where we learn English."
     ])
 }
 
