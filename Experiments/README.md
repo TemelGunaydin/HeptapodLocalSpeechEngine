@@ -24,6 +24,23 @@ Tools/trace_summary.py \
 Use labels in the form `name=/path/to/trace.jsonl` when comparing multiple
 ASR models or chunk settings.
 
+## Live Benchmark Runner
+
+Run a repeatable text-only benchmark matrix from one WAV file:
+
+```bash
+Tools/run_live_benchmark.py \
+  --audio /Users/temelgunaydin/Downloads/output.wav \
+  --duration 60 \
+  --preset quick
+```
+
+The runner builds `HeptapodLiveSpeechDemo`, writes each trace/log under a
+timestamped `/tmp/heptapod-live-benchmarks/...` directory, and generates a
+`report.md` with the same trace summary table format. Use `--preset matrix` for
+the six-case compact/quality and chunk-duration comparison, or pass custom cases
+with `--case label:asr:chunk_duration:max_buffered_segments`.
+
 ## Result Template
 
 ```markdown

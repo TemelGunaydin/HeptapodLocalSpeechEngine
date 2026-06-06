@@ -73,6 +73,28 @@ Tools/trace_summary.py \
 | `audio-quality-chunk12-v1` | Qwen3 1.7B 8-bit | 1.2s | 3 | 50 | 50 | 17 | 0.114s | 0.674s | Better than compact 1.2s, but cadence drops. |
 | `audio-quality-chunk15-v1` | Qwen3 1.7B 8-bit | 1.5s | 3 | 40 | 40 | 13 | 0.126s | 0.732s | Less frequent output; some phrase merges improve, others degrade. |
 
+## Automated Runner Verification
+
+`Tools/run_live_benchmark.py` was added so the compact/quality comparison can be
+rerun without manually launching each command. A 60 second quick run on the same
+WAV file produced:
+
+| Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | ASR avg | MT avg | Finished |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `compact-1.0-b3` | compact | 1.0s | 3 | 60 | 59 | 20 | 0.084s | 0.591s | yes |
+| `quality-1.0-b3` | quality | 1.0s | 3 | 60 | 59 | 20 | 0.097s | 0.597s | yes |
+
+Runner output was written to a timestamped `/tmp/heptapod-live-benchmarks/...`
+directory and can be regenerated with:
+
+```bash
+Tools/run_live_benchmark.py \
+  --audio /Users/temelgunaydin/Downloads/output.wav \
+  --duration 60 \
+  --preset quick \
+  --examples 3
+```
+
 ## Findings
 
 - Text-only mode should emit ASR immediately and translate only buffered stable text.
@@ -131,7 +153,7 @@ swift run HeptapodLiveSpeechDemo -- \
 
 ## Next Benchmarks
 
-1. Add a compact report generator so trace comparisons do not require ad hoc `jq` commands.
+1. Use `Tools/run_live_benchmark.py` to regenerate the compact/quality matrix from one WAV file.
 2. Try a true streaming ASR backend after the Qwen quality path is stable.
 3. Only after ASR improves further, compare MADLAD with another MT option.
 4. Treat SeamlessM4T as an offline quality reference, not the immediate live low-latency path.
