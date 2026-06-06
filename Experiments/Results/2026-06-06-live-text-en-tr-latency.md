@@ -82,8 +82,8 @@ WAV file produced:
 
 | Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | ASR avg | MT avg | Finished |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `compact-1.0-b3` | compact | 1.0s | 3 | 60 | 59 | 20 | 0.084s | 0.591s | yes |
-| `quality-1.0-b3` | quality | 1.0s | 3 | 60 | 59 | 20 | 0.097s | 0.597s | yes |
+| `compact-1.0-b3` | compact | 1.0s | 3 | 60 | 59 | 21 | 0.089s | 0.664s | yes |
+| `quality-1.0-b3` | quality | 1.0s | 3 | 60 | 59 | 21 | 0.098s | 0.631s | yes |
 
 Runner output was written to a timestamped `/tmp/heptapod-live-benchmarks/...`
 directory and can be regenerated with:
@@ -106,6 +106,8 @@ Tools/run_live_benchmark.py \
 - Qwen3 ASR 1.7B 8-bit improved important transcript errors with only a small per-chunk latency increase on this Mac.
 - `max-buffered-segments=2` lowered MT latency but sent too little context into translation.
 - Carrying incomplete English tails avoids poor partial translations such as `is just to`, `as`, `when`, and `keep`.
+- Retaining live ASR fragments such as `A peaceful`, `I feel like`, and `hold` preserves phrases that MADLAD otherwise drops when they are translated alone.
+- Stream-end flush now forces the remaining retained tail through translation so the final phrase is not silently lost.
 - WAV file tests must be duration-limited and paced like live audio; otherwise ASR can outrun MT and create a large translation backlog.
 
 ## Quality Notes
@@ -136,6 +138,21 @@ Into the T J.
 ```
 
 These are ASR errors before translation, so switching translation models before improving ASR would be misleading.
+
+After adding live-fragment tail retention, the quality ASR path improved this
+sequence:
+
+```text
+A peaceful. Day.
+I feel like. Like I should lower my. Voice and hold. A cup of tea.
+```
+
+into translation inputs closer to natural English:
+
+```text
+A peaceful day.
+I feel like I should lower my voice and hold a cup of tea.
+```
 
 ## Current Recommended Command
 

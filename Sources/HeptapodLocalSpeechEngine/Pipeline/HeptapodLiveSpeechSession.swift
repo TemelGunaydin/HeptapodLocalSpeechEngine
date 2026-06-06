@@ -290,7 +290,8 @@ public actor HeptapodLiveSpeechSession {
                             &pending,
                             at: index,
                             synthesisQueue: synthesisQueue,
-                            sourceLanguageCode: sourceLanguageCode
+                            sourceLanguageCode: sourceLanguageCode,
+                            retainsIncompleteTail: false
                         )
                     }
 
@@ -352,8 +353,13 @@ private struct PendingSentence {
         segmentCount += 1
     }
 
-    mutating func drainTranscript(fallbackLanguageCode: String?) -> HeptapodTranscriptSegment? {
-        let split = TranscriptTranslationNormalizer.readyTextAndRemainder(text)
+    mutating func drainTranscript(
+        fallbackLanguageCode: String?,
+        retainsIncompleteTail: Bool = true
+    ) -> HeptapodTranscriptSegment? {
+        let split = retainsIncompleteTail
+            ? TranscriptTranslationNormalizer.readyTextAndRemainder(text)
+            : TranscriptTranslationNormalizer.readyTextOnly(text)
         let retainedLanguageCode = languageCode
 
         parts.removeAll()
@@ -420,6 +426,10 @@ private struct TranscriptTranslationNormalizer {
         )
     }
 
+    static func readyTextOnly(_ text: String) -> Split {
+        Split(readyText: normalized(text), remainderText: "")
+    }
+
     private static func normalized(_ fragments: [Fragment]) -> String {
         guard fragments.isEmpty == false else {
             return ""
@@ -461,6 +471,7 @@ private struct TranscriptTranslationNormalizer {
         }
         return trailingContinuationWords.contains(lastWord)
             || endsWithContinuationPhrase(last.text)
+            || objectExpectingWords.contains(lastWord)
     }
 
     private static func incompleteTailStartIndex(in fragments: [Fragment]) -> Array<Fragment>.Index {
@@ -541,6 +552,9 @@ private struct TranscriptTranslationNormalizer {
         if endsWithContinuationPhrase(fragment.text) {
             return true
         }
+        if shouldJoinObjectPhrase(fragment, with: next) {
+            return true
+        }
         if let first = firstWord(in: next.text),
            leadingContinuationWords.contains(first) {
             return true
@@ -557,6 +571,9 @@ private struct TranscriptTranslationNormalizer {
             return true
         }
         if endsWithContinuationPhrase(fragment.text) {
+            return true
+        }
+        if shouldJoinObjectPhrase(fragment, with: next) {
             return true
         }
         if let first = firstWord(in: next.text),
@@ -595,6 +612,10 @@ private struct TranscriptTranslationNormalizer {
         if endsWithContinuationPhrase(current) {
             return lowercasingFirstWord(in: withoutDuplicateBoundary)
         }
+        if let last = lastWord(in: current),
+           objectExpectingWords.contains(last) {
+            return lowercasingFirstWord(in: withoutDuplicateBoundary)
+        }
         guard let first = firstWord(in: withoutDuplicateBoundary),
               leadingContinuationWords.contains(first) else {
             return withoutDuplicateBoundary
@@ -604,6 +625,9 @@ private struct TranscriptTranslationNormalizer {
 
     private static func lowercasingFirstWord(in text: String) -> String {
         guard let range = firstWordRange(in: text) else {
+            return text
+        }
+        if text[range] == "I" {
             return text
         }
         var result = text
@@ -633,7 +657,18 @@ private struct TranscriptTranslationNormalizer {
 
     private static func endsWithContinuationPhrase(_ text: String) -> Bool {
         let wordList = words(in: text)
-        return wordList.suffix(2) == ["my", "first"]
+        return continuationPhrases.contains { phrase in
+            wordList.suffix(phrase.count) == phrase[...]
+        }
+    }
+
+    private static func shouldJoinObjectPhrase(_ fragment: Fragment, with next: Fragment) -> Bool {
+        guard let last = lastWord(in: fragment.text),
+              objectExpectingWords.contains(last),
+              let first = firstWord(in: next.text) else {
+            return false
+        }
+        return objectLeadingWords.contains(first)
     }
 
     private static func firstWord(in text: String) -> String? {
@@ -697,6 +732,21 @@ private struct TranscriptTranslationNormalizer {
         "and", "are", "as", "at", "for", "from", "if", "in", "is",
         "it", "of", "on", "or", "that", "the", "to", "with", "without"
     ]
+
+    private static let continuationPhrases: [[String]] = [
+        ["my", "first"],
+        ["a", "peaceful"],
+        ["i", "feel", "like"],
+        ["feel", "like"]
+    ]
+
+    private static let objectExpectingWords: Set<String> = [
+        "hold"
+    ]
+
+    private static let objectLeadingWords: Set<String> = [
+        "a", "an", "my", "the", "this", "your"
+    ]
 }
 
 private func shouldFlush(
@@ -722,9 +772,13 @@ private func flushPending(
     _ pending: inout PendingSentence,
     at index: Int,
     synthesisQueue: LiveSynthesisQueue,
-    sourceLanguageCode: String?
+    sourceLanguageCode: String?,
+    retainsIncompleteTail: Bool = true
 ) async -> Bool {
-    guard let transcript = pending.drainTranscript(fallbackLanguageCode: sourceLanguageCode) else {
+    guard let transcript = pending.drainTranscript(
+        fallbackLanguageCode: sourceLanguageCode,
+        retainsIncompleteTail: retainsIncompleteTail
+    ) else {
         return false
     }
     await synthesisQueue.enqueue(index: index, transcript: transcript)

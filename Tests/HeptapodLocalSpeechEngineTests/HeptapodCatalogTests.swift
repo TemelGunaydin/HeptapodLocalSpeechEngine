@@ -528,6 +528,59 @@ func textOnlyBufferedTranslationRetainsCommonContinuationTails() async throws {
 }
 
 @Test
+func textOnlyBufferedTranslationRetainsLiveASRFragmentTails() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        outputMode: .textOnly
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("Something many of us need.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("A peaceful.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Day.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("I feel like.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Like I should lower my voice.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("I should hold.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("A cup of tea.".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("Please hold.".utf8), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(maximumBufferedSegments: 1)
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var translations: [String] = []
+
+    for try await event in events {
+        if case .translation(_, let result) = event {
+            translations.append(result.translation.translatedText)
+        }
+    }
+
+    #expect(translations == [
+        "Something many of us need.",
+        "A peaceful day.",
+        "I feel like I should lower my voice.",
+        "I should hold a cup of tea.",
+        "Please hold."
+    ])
+}
+
+@Test
 func sentenceBufferedLiveSessionFlushesOneResultAfterSilence() async throws {
     let configuration = HeptapodPipelineConfiguration(
         speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
