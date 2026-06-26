@@ -161,11 +161,53 @@ stable:  Using local live translation, the audio should be transcribed quickly.
 This suggests `--asr-stabilization` is worth testing on real YouTube/system
 audio again: it costs latency, but it can recover much better translation input.
 
+## System Audio Smoke Verification
+
+The same fixture was also played through macOS output with `afplay` while the
+demo captured system audio through ScreenCaptureKit:
+
+```bash
+( sleep 3; afplay /tmp/heptapod-local-fixture.wav ) &
+HF_DOWNLOAD_STALL_TIMEOUT=600 .build/debug/HeptapodLiveSpeechDemo \
+  --real \
+  --system-audio \
+  --to tr \
+  --asr compact \
+  --latency balanced \
+  --chunk-duration 1 \
+  --max-buffered-segments 3 \
+  --text-only \
+  --duration 10 \
+  --trace /tmp/heptapod-system-audio-smoke.jsonl \
+  --asr-stabilization
+```
+
+| Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | Repeated MT | ASR avg | MT avg | Finished |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |
+| `system` | compact | 1.0s | 3 | 10 | 2 | 2 | 0 | 0.066s | 0.749s | yes |
+
+Captured examples:
+
+```text
+ASR: Quickly translated
+MT:  Hızlı tercüme
+
+ASR: This short sample helps compare latency without opening YouTube.
+MT:  Bu kısa örnek, YouTube'u açmadan gecikmeyi karşılaştırmaya yardımcı olur.
+```
+
+This verifies the target capture route for the YouTube workflow: macOS system
+audio capture -> VAD -> compact Qwen ASR -> MADLAD translation -> text trace.
+The first half of the synthetic fixture was only partially captured because the
+playback/capture timing is approximate; a browser/YouTube run should still be
+tested with the same trace flags.
+
 ## Findings
 
 - Text-only mode should emit ASR immediately and translate only buffered stable text.
 - Text-only ASR stabilization increased missing-output risk for this chunked Qwen ASR path, so text-only now defaults stabilization off.
 - Forced stable-prefix ASR can materially improve compact ASR quality on clean speech, with roughly doubled MT ready latency in the local smoke fixture.
+- System-audio capture produced real ASR/MT trace output from local playback, so the ScreenCaptureKit route is functional on this machine.
 - `1.0s` chunks with `3` buffered ASR segments is the best current latency/quality balance.
 - `1.2s` chunks did not improve quality enough to justify the lower translation cadence.
 - Qwen3 ASR 1.7B 8-bit improved important transcript errors with only a small per-chunk latency increase on this Mac.
