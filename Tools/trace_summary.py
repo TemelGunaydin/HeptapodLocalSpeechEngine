@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
@@ -38,6 +38,12 @@ class TranslationExample:
 
 
 @dataclass(frozen=True)
+class RepeatedTranslationSegment:
+    index: int
+    examples: list[TranslationExample]
+
+
+@dataclass(frozen=True)
 class TraceSummary:
     label: str
     path: Path
@@ -48,6 +54,7 @@ class TraceSummary:
     transcript_latency: LatencyStats
     translation_latency: LatencyStats
     examples: list[TranslationExample]
+    repeated_translation_segments: list[RepeatedTranslationSegment]
 
 
 def load_trace(path: Path, label: str | None = None) -> TraceSummary:
@@ -57,6 +64,7 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
     transcript_latencies: list[float] = []
     translation_latencies: list[float] = []
     examples: list[TranslationExample] = []
+    examples_by_index: dict[int, list[TranslationExample]] = defaultdict(list)
     run_finished = False
 
     with path.open("r", encoding="utf-8") as handle:
@@ -94,13 +102,20 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
             if event == "translation_ready":
                 transcript = str(item.get("transcriptText", "")).strip()
                 translation = str(item.get("translationText", "")).strip()
-                examples.append(
-                    TranslationExample(
-                        index=item.get("index") if isinstance(item.get("index"), int) else None,
-                        transcript=transcript,
-                        translation=translation,
-                    )
+                example = TranslationExample(
+                    index=item.get("index") if isinstance(item.get("index"), int) else None,
+                    transcript=transcript,
+                    translation=translation,
                 )
+                examples.append(example)
+                if example.index is not None:
+                    examples_by_index[example.index].append(example)
+
+    repeated_translation_segments = [
+        RepeatedTranslationSegment(index=index, examples=index_examples)
+        for index, index_examples in sorted(examples_by_index.items())
+        if len(index_examples) > 1
+    ]
 
     return TraceSummary(
         label=label or path.stem,
@@ -112,6 +127,7 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
         transcript_latency=LatencyStats.from_values(transcript_latencies),
         translation_latency=LatencyStats.from_values(translation_latencies),
         examples=examples,
+        repeated_translation_segments=repeated_translation_segments,
     )
 
 
@@ -131,6 +147,14 @@ def format_seconds(value: float | None) -> str:
     return f"{value:.3f}s"
 
 
+def format_repeated_translation_count(summary: TraceSummary) -> str:
+    repeated_segments = len(summary.repeated_translation_segments)
+    if repeated_segments == 0:
+        return "0"
+    repeated_events = sum(len(segment.examples) for segment in summary.repeated_translation_segments)
+    return f"{repeated_segments} seg / {repeated_events} MT"
+
+
 def first_command_arg(command: list[str], option: str) -> str:
     for index, part in enumerate(command):
         if part == option and index + 1 < len(command):
@@ -140,8 +164,8 @@ def first_command_arg(command: list[str], option: str) -> str:
 
 def markdown_table(summaries: list[TraceSummary]) -> str:
     rows = [
-        "| Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | ASR avg | MT avg | Finished |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | Repeated MT | ASR avg | MT avg | Finished |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |",
     ]
     for summary in summaries:
         command = summary.command
@@ -150,7 +174,7 @@ def markdown_table(summaries: list[TraceSummary]) -> str:
         buffer = first_command_arg(command, "--max-buffered-segments") or "n/a"
         rows.append(
             "| {label} | {asr} | {chunk} | {buffer} | {segments} | {transcripts} | "
-            "{translations} | {asr_avg} | {mt_avg} | {finished} |".format(
+            "{translations} | {repeated_translations} | {asr_avg} | {mt_avg} | {finished} |".format(
                 label=summary.label,
                 asr=asr,
                 chunk=chunk,
@@ -158,6 +182,7 @@ def markdown_table(summaries: list[TraceSummary]) -> str:
                 segments=summary.events["segment_started"],
                 transcripts=summary.events["transcript_ready"],
                 translations=summary.events["translation_ready"],
+                repeated_translations=format_repeated_translation_count(summary),
                 asr_avg=format_seconds(summary.transcript_latency.average),
                 mt_avg=format_seconds(summary.translation_latency.average),
                 finished="yes" if summary.run_finished else "no",
@@ -166,10 +191,10 @@ def markdown_table(summaries: list[TraceSummary]) -> str:
     return "\n".join(rows)
 
 
-def markdown_examples(summary: TraceSummary, limit: int) -> str:
+def markdown_examples(summary: TraceSummary, limit: int, *, from_end: bool = False) -> str:
     if limit <= 0 or not summary.examples:
         return ""
-    selected = summary.examples[:limit]
+    selected = summary.examples[-limit:] if from_end else summary.examples[:limit]
     lines = [f"### {summary.label}", ""]
     for example in selected:
         index = f"SEG {example.index}" if example.index is not None else "SEG ?"
@@ -229,6 +254,37 @@ def markdown_side_by_side_examples(summaries: list[TraceSummary], limit: int) ->
     return "\n".join(sections).rstrip()
 
 
+def markdown_repeated_translation_segments(summaries: list[TraceSummary], limit: int) -> str:
+    if limit <= 0:
+        return ""
+
+    rows: list[str] = [
+        "| Trace | Segment | Count | First MT | Last MT |",
+        "| --- | ---: | ---: | --- | --- |",
+    ]
+    remaining = limit
+    for summary in summaries:
+        for segment in summary.repeated_translation_segments:
+            if remaining <= 0:
+                break
+            rows.append(
+                "| {label} | {segment} | {count} | {first_translation} | {last_translation} |".format(
+                    label=markdown_cell(summary.label),
+                    segment=segment.index,
+                    count=len(segment.examples),
+                    first_translation=markdown_cell(segment.examples[0].translation),
+                    last_translation=markdown_cell(segment.examples[-1].translation),
+                )
+            )
+            remaining -= 1
+        if remaining <= 0:
+            break
+
+    if len(rows) == 2:
+        return ""
+    return "\n".join(rows)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Summarize Heptapod JSONL trace files as Markdown."
@@ -251,6 +307,18 @@ def main() -> None:
         default=0,
         help="Include the first N translation examples side by side across traces.",
     )
+    parser.add_argument(
+        "--last-examples",
+        type=int,
+        default=0,
+        help="Include the last N translation examples per trace.",
+    )
+    parser.add_argument(
+        "--repeated-segments",
+        type=int,
+        default=0,
+        help="Include up to N segment indexes that emitted translation more than once.",
+    )
     args = parser.parse_args()
 
     summaries = [load_trace(path, label=label) for label, path in args.traces]
@@ -270,6 +338,23 @@ def main() -> None:
         if rendered:
             print()
             print("## Side-By-Side Examples")
+            print()
+            print(rendered)
+
+    if args.last_examples > 0:
+        print()
+        print("## Last Examples")
+        for summary in summaries:
+            rendered = markdown_examples(summary, args.last_examples, from_end=True)
+            if rendered:
+                print()
+                print(rendered)
+
+    if args.repeated_segments > 0:
+        rendered = markdown_repeated_translation_segments(summaries, args.repeated_segments)
+        if rendered:
+            print()
+            print("## Repeated Segment Translations")
             print()
             print(rendered)
 

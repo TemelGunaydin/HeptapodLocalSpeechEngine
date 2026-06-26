@@ -170,6 +170,8 @@ def make_report(
     results: list[RunResult],
     examples: int,
     compare_examples: int,
+    last_examples: int,
+    repeated_segments: int,
 ) -> Path:
     report_path = output_dir / "report.md"
     summary = ""
@@ -183,6 +185,10 @@ def make_report(
             str(examples),
             "--compare-examples",
             str(compare_examples),
+            "--last-examples",
+            str(last_examples),
+            "--repeated-segments",
+            str(repeated_segments),
         ]
         completed = subprocess.run(
             summary_command,
@@ -317,6 +323,18 @@ def main() -> int:
         default=3,
         help="Side-by-side examples across traces in report.",
     )
+    parser.add_argument(
+        "--last-examples",
+        type=int,
+        default=2,
+        help="Final translation examples per trace in report.",
+    )
+    parser.add_argument(
+        "--repeated-segments",
+        type=int,
+        default=5,
+        help="Repeated translation segment rows in report.",
+    )
     parser.add_argument("--skip-build", action="store_true", help="Do not run swift build first.")
     parser.add_argument("--keep-going", action="store_true", help="Run remaining cases after a failure.")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them.")
@@ -367,6 +385,8 @@ def main() -> int:
         results=results,
         examples=args.examples,
         compare_examples=args.compare_examples,
+        last_examples=args.last_examples,
+        repeated_segments=args.repeated_segments,
     )
     print(report_path)
 

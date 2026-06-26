@@ -94,7 +94,9 @@ Tools/run_live_benchmark.py \
   --duration 60 \
   --preset quick \
   --examples 3 \
-  --compare-examples 3
+  --compare-examples 3 \
+  --last-examples 3 \
+  --repeated-segments 5
 ```
 
 ## Findings
@@ -111,6 +113,7 @@ Tools/run_live_benchmark.py \
 - Joining duplicate boundary words avoids ASR chunk artifacts such as `Where we learn. Learn English.`.
 - Joining object-continuation fragments avoids chunk artifacts such as `Today, we are talking. About something.` and `Let me ask you. Something.`.
 - WAV file tests must be duration-limited and paced like live audio; otherwise ASR can outrun MT and create a large translation backlog.
+- Benchmark reports now include final translation examples and repeated segment translations, so stream-end flush behavior is visible without manually scanning JSONL traces.
 
 ## Quality Notes
 
@@ -201,6 +204,7 @@ swift run HeptapodLiveSpeechDemo -- \
 ## Next Benchmarks
 
 1. Use `Tools/run_live_benchmark.py` to regenerate the compact/quality matrix from one WAV file.
-2. Try a true streaming ASR backend after the Qwen quality path is stable.
-3. Only after ASR improves further, compare MADLAD with another MT option.
-4. Treat SeamlessM4T as an offline quality reference, not the immediate live low-latency path.
+2. Review the `Last Examples` and `Repeated Segment Translations` sections before adding new normalizer rules.
+3. Try a true streaming ASR backend after the Qwen quality path is stable.
+4. Only after ASR improves further, compare MADLAD with another MT option.
+5. Treat SeamlessM4T as an offline quality reference, not the immediate live low-latency path.
