@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -16,6 +17,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEMO_PRODUCT = "HeptapodLiveSpeechDemo"
 DEMO_BINARY = REPO_ROOT / ".build" / "debug" / DEMO_PRODUCT
 TRACE_SUMMARY = REPO_ROOT / "Tools" / "trace_summary.py"
+COMMAND_LINE_TOOLS = Path("/Library/Developer/CommandLineTools")
+COMMAND_LINE_TOOLS_SDKS = COMMAND_LINE_TOOLS / "SDKs"
+MLX_METALLIB_SCRIPT = REPO_ROOT / ".build" / "checkouts" / "speech-swift" / "scripts" / "build_mlx_metallib.sh"
 
 
 @dataclass(frozen=True)
@@ -98,14 +102,15 @@ def run_command(
     *,
     log_path: Path | None = None,
     dry_run: bool = False,
+    env: dict[str, str] | None = None,
 ) -> int:
-    printable = " ".join(command)
+    printable = printable_command(command, env=env)
     if dry_run:
         print(printable)
         return 0
 
     if log_path is None:
-        completed = subprocess.run(command, cwd=REPO_ROOT, check=False)
+        completed = subprocess.run(command, cwd=REPO_ROOT, env=env, check=False)
         return completed.returncode
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,12 +120,87 @@ def run_command(
         completed = subprocess.run(
             command,
             cwd=REPO_ROOT,
+            env=env,
             stdout=handle,
             stderr=subprocess.STDOUT,
             check=False,
         )
         handle.write(f"\nexit_code={completed.returncode}\n")
         return completed.returncode
+
+
+def printable_command(command: list[str], *, env: dict[str, str] | None = None) -> str:
+    prefix = []
+    if env is not None:
+        for key in ("SDKROOT", "DEVELOPER_DIR", "BUILD_DIR", "HF_DOWNLOAD_STALL_TIMEOUT"):
+            value = env.get(key)
+            if value and value != os.environ.get(key):
+                prefix.append(f"{key}={value}")
+    return " ".join([*prefix, *command])
+
+
+def swift_build_environment() -> dict[str, str] | None:
+    env = os.environ.copy()
+    changed = False
+
+    if not env.get("SDKROOT"):
+        sdk_root = compatible_macos_sdk_root()
+        if sdk_root is not None:
+            env["SDKROOT"] = str(sdk_root)
+            changed = True
+
+    if not env.get("DEVELOPER_DIR") and COMMAND_LINE_TOOLS.exists():
+        env["DEVELOPER_DIR"] = str(COMMAND_LINE_TOOLS)
+        changed = True
+
+    return env if changed else None
+
+
+def model_runtime_environment() -> dict[str, str] | None:
+    env = os.environ.copy()
+    if env.get("HF_DOWNLOAD_STALL_TIMEOUT"):
+        return None
+    env["HF_DOWNLOAD_STALL_TIMEOUT"] = "600"
+    return env
+
+
+def mlx_metallib_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    env["BUILD_DIR"] = str(REPO_ROOT / ".build")
+    return env
+
+
+def build_mlx_metallib(*, dry_run: bool) -> int:
+    if not MLX_METALLIB_SCRIPT.exists():
+        return 0
+    return run_command(
+        [str(MLX_METALLIB_SCRIPT), "debug"],
+        dry_run=dry_run,
+        env=mlx_metallib_environment(),
+    )
+
+
+def compatible_macos_sdk_root() -> Path | None:
+    if not COMMAND_LINE_TOOLS_SDKS.exists():
+        return None
+
+    candidates: list[tuple[float, Path]] = []
+    for sdk in COMMAND_LINE_TOOLS_SDKS.glob("MacOSX*.sdk"):
+        match = re.fullmatch(r"MacOSX(\d+(?:\.\d+)?)\.sdk", sdk.name)
+        if not match:
+            continue
+        try:
+            version = float(match.group(1))
+        except ValueError:
+            continue
+        candidates.append((version, sdk))
+
+    if not candidates:
+        return None
+
+    pre_beta_sdks = [(version, sdk) for version, sdk in candidates if version < 27]
+    selected = max(pre_beta_sdks or candidates, key=lambda item: item[0])
+    return selected[1]
 
 
 def benchmark_command(
@@ -357,9 +437,16 @@ def main() -> int:
 
     if not args.skip_build:
         build_command = ["swift", "build", "--product", DEMO_PRODUCT]
-        build_status = run_command(build_command, dry_run=args.dry_run)
+        build_status = run_command(
+            build_command,
+            dry_run=args.dry_run,
+            env=swift_build_environment(),
+        )
         if build_status != 0:
             return build_status
+        metallib_status = build_mlx_metallib(dry_run=args.dry_run)
+        if metallib_status != 0:
+            return metallib_status
 
     results: list[RunResult] = []
     for case in cases:
@@ -372,7 +459,12 @@ def main() -> int:
             duration_seconds=args.duration,
             trace_path=trace_path,
         )
-        status = run_command(command, log_path=log_path, dry_run=args.dry_run)
+        status = run_command(
+            command,
+            log_path=log_path,
+            dry_run=args.dry_run,
+            env=model_runtime_environment(),
+        )
         results.append(RunResult(case, trace_path, log_path, status))
         if status != 0 and not args.keep_going:
             break

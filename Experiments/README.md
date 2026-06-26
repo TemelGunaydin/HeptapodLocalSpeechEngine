@@ -47,6 +47,12 @@ the six-case compact/quality and chunk-duration comparison, or pass custom cases
 with `--case label:asr:chunk_duration:max_buffered_segments`.
 Audio input can be WAV, M4A, MP3, or CAF if the local audio runtime can decode
 it.
+The runner also prepares `mlx.metallib` after SwiftPM build so MLX can load its
+Metal kernels at runtime.
+
+On machines where the active Xcode beta SDK is newer than the installed Swift
+compiler, the runner automatically builds with the latest compatible macOS SDK
+under `/Library/Developer/CommandLineTools/SDKs`.
 
 ## Result Template
 

@@ -99,6 +99,34 @@ Tools/run_live_benchmark.py \
   --repeated-segments 5
 ```
 
+## Local Smoke Verification
+
+On 2026-06-26, a synthetic English `say` fixture was converted to 16 kHz mono
+WAV and run through the compact text-only pipeline. The benchmark runner built
+with the compatible Command Line Tools SDK, prepared `mlx.metallib`, and ran the
+demo with an extended Hugging Face download stall timeout.
+
+```bash
+Tools/run_live_benchmark.py \
+  --audio /tmp/heptapod-local-fixture.wav \
+  --duration 5 \
+  --case compact-smoke:compact:1.0:3 \
+  --examples 2 \
+  --compare-examples 2 \
+  --last-examples 2 \
+  --repeated-segments 5 \
+  --output-dir /tmp/heptapod-local-smoke-v4
+```
+
+| Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | Repeated MT | ASR avg | MT avg | Finished |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |
+| `compact-smoke` | compact | 1.0s | 3 | 5 | 5 | 2 | 0 | 0.101s | 0.601s | yes |
+
+This smoke run verifies that the local build, MLX shader setup, model cache,
+file audio source, VAD, Qwen compact ASR, MADLAD translation, trace writer, and
+report generator work together end to end. The synthetic TTS source is still not
+a quality benchmark for YouTube-like audio.
+
 ## Findings
 
 - Text-only mode should emit ASR immediately and translate only buffered stable text.

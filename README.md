@@ -272,6 +272,15 @@ xcodebuild -downloadComponent MetalToolchain
 BUILD_DIR="$(pwd)/.build" .build/checkouts/speech-swift/scripts/build_mlx_metallib.sh debug
 ```
 
+If the active Xcode beta SDK is newer than the installed Swift compiler, build
+with the compatible Command Line Tools SDK:
+
+```bash
+SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
+DEVELOPER_DIR=/Library/Developer/CommandLineTools \
+swift build --product HeptapodLiveSpeechDemo
+```
+
 ## Model Families In The Catalog
 
 ASR alternatives:
