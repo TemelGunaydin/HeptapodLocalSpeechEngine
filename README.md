@@ -172,7 +172,9 @@ Qwen adapter is still a chunk decoder, but the live session now wraps it in a
 ring-buffer/sliding-window policy: each new speech chunk is decoded with recent
 audio context, consecutive hypotheses are compared, and only the stable prefix
 delta is sent downstream. On a silence endpoint, the latest uncommitted
-hypothesis is flushed. Use `--no-asr-stabilization` to disable that layer.
+hypothesis is flushed. Text-only mode keeps this off by default for easier ASR
+observability; use `--asr-stabilization` to force it on or
+`--no-asr-stabilization` to disable it explicitly.
 
 Latency tuning:
 

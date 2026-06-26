@@ -127,10 +127,45 @@ file audio source, VAD, Qwen compact ASR, MADLAD translation, trace writer, and
 report generator work together end to end. The synthetic TTS source is still not
 a quality benchmark for YouTube-like audio.
 
+The same 5 second fixture was then rerun with forced stable-prefix ASR:
+
+```bash
+Tools/run_live_benchmark.py \
+  --audio /tmp/heptapod-local-fixture.wav \
+  --duration 5 \
+  --case stable-smoke:compact:1.0:3 \
+  --asr-stabilization \
+  --examples 2 \
+  --compare-examples 2 \
+  --last-examples 2 \
+  --repeated-segments 5 \
+  --output-dir /tmp/heptapod-local-stable-smoke-v1
+```
+
+| Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | Repeated MT | ASR avg | MT avg | Finished |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |
+| `compact-smoke` | compact | 1.0s | 3 | 5 | 5 | 2 | 0 | 0.101s | 0.601s | yes |
+| `stable-smoke` | compact | 1.0s | 3 | 5 | 4 | 2 | 0 | 0.214s | 1.046s | yes |
+
+Stable-prefix ASR fixed the important compact transcript errors in this clean
+fixture:
+
+```text
+default: Today we are test.
+stable:  Today we are testing local live translation.
+
+default: Local Livtran Translation the audio should be trans. Transcribed quickly.
+stable:  Using local live translation, the audio should be transcribed quickly.
+```
+
+This suggests `--asr-stabilization` is worth testing on real YouTube/system
+audio again: it costs latency, but it can recover much better translation input.
+
 ## Findings
 
 - Text-only mode should emit ASR immediately and translate only buffered stable text.
 - Text-only ASR stabilization increased missing-output risk for this chunked Qwen ASR path, so text-only now defaults stabilization off.
+- Forced stable-prefix ASR can materially improve compact ASR quality on clean speech, with roughly doubled MT ready latency in the local smoke fixture.
 - `1.0s` chunks with `3` buffered ASR segments is the best current latency/quality balance.
 - `1.2s` chunks did not improve quality enough to justify the lower translation cadence.
 - Qwen3 ASR 1.7B 8-bit improved important transcript errors with only a small per-chunk latency increase on this Mac.

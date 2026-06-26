@@ -210,8 +210,9 @@ def benchmark_command(
     target_language: str,
     duration_seconds: float,
     trace_path: Path,
+    uses_asr_stabilization: bool,
 ) -> list[str]:
-    return [
+    command = [
         str(DEMO_BINARY),
         "--real",
         "--audio",
@@ -232,6 +233,9 @@ def benchmark_command(
         "--trace",
         str(trace_path),
     ]
+    if uses_asr_stabilization:
+        command.append("--asr-stabilization")
+    return command
 
 
 def format_number(value: float) -> str:
@@ -252,6 +256,7 @@ def make_report(
     compare_examples: int,
     last_examples: int,
     repeated_segments: int,
+    uses_asr_stabilization: bool,
 ) -> Path:
     report_path = output_dir / "report.md"
     summary = ""
@@ -345,6 +350,7 @@ def make_report(
                         target_language=target_language,
                         duration_seconds=duration_seconds,
                         trace_path=result.trace_path,
+                        uses_asr_stabilization=uses_asr_stabilization,
                     )
                 ),
                 "```",
@@ -420,6 +426,11 @@ def main() -> int:
         default=5,
         help="Repeated translation segment rows in report.",
     )
+    parser.add_argument(
+        "--asr-stabilization",
+        action="store_true",
+        help="Force sliding-window stable-prefix ASR buffering in text-only benchmark runs.",
+    )
     parser.add_argument("--skip-build", action="store_true", help="Do not run swift build first.")
     parser.add_argument("--keep-going", action="store_true", help="Run remaining cases after a failure.")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them.")
@@ -458,6 +469,7 @@ def main() -> int:
             target_language=args.to,
             duration_seconds=args.duration,
             trace_path=trace_path,
+            uses_asr_stabilization=args.asr_stabilization,
         )
         status = run_command(
             command,
@@ -484,6 +496,7 @@ def main() -> int:
         compare_examples=args.compare_examples,
         last_examples=args.last_examples,
         repeated_segments=args.repeated_segments,
+        uses_asr_stabilization=args.asr_stabilization,
     )
     print(report_path)
 

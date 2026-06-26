@@ -167,6 +167,8 @@ struct HeptapodLiveSpeechDemo {
                               Flush sentence buffer after this many ASR segments.
           --punctuation-endpoint
                               Flush early when ASR text ends with sentence punctuation.
+          --asr-stabilization
+                              Force sliding-window stable-prefix ASR buffering.
           --no-asr-stabilization
                               Disable sliding-window stable-prefix ASR buffering.
           --tts <name>        Real mode TTS backend: kokoro or chatterbox. Default: kokoro.
@@ -602,6 +604,8 @@ private struct DemoOptions {
                 maximumBufferedSegments = value
             case "--punctuation-endpoint":
                 usesPunctuationEndpoint = true
+            case "--asr-stabilization":
+                usesASRStabilization = true
             case "--no-asr-stabilization":
                 usesASRStabilization = false
             case "--to":
