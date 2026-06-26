@@ -294,7 +294,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run repeatable local Heptapod live translation benchmarks."
     )
-    parser.add_argument("--audio", required=True, type=Path, help="Input WAV file.")
+    parser.add_argument(
+        "--audio",
+        required=True,
+        type=Path,
+        help="Input audio file readable by the local audio runtime, such as WAV, M4A, MP3, or CAF.",
+    )
     parser.add_argument("--to", default="tr", help="Target language code.")
     parser.add_argument("--duration", type=float, default=60.0, help="Seconds to process.")
     parser.add_argument(

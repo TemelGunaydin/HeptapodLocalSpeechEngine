@@ -154,6 +154,7 @@ struct HeptapodLiveSpeechDemo {
           --interactive       Type preview text segments on stdin.
           --real              Use real speech-swift adapters. Requires --audio, --microphone, or --system-audio.
           --audio <path>      Stream an audio file through the live session.
+                              WAV, M4A, MP3, and CAF are expected by the audio runtime.
           --microphone        Capture live microphone audio chunks.
           --system-audio      Capture macOS system audio with ScreenCaptureKit.
           --duration <sec>    Stop live/file audio after this many seconds.

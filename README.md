@@ -137,6 +137,9 @@ HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
   --output-dir /tmp/heptapod-live
 ```
 
+File-backed live sessions use the local audio runtime and can read common
+AVFoundation formats such as WAV, M4A, MP3, and CAF.
+
 Real microphone live session:
 
 ```bash
@@ -250,6 +253,9 @@ HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodRealSpeechDemo -- \
   --output /tmp/heptapod-output.wav \
   --report /tmp/heptapod-real-report.json
 ```
+
+The file input path can point to WAV, M4A, MP3, or CAF audio that AVFoundation
+can decode locally.
 
 The real demo uses Qwen3-ASR, MADLAD-400, and Kokoro through the
 `HeptapodSpeechSwiftAdapters` target, which wraps `speech-swift`. It can also use

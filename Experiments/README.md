@@ -28,14 +28,16 @@ events side by side so ASR and MT regressions are easier to inspect.
 
 ## Live Benchmark Runner
 
-Run a repeatable text-only benchmark matrix from one WAV file:
+Run a repeatable text-only benchmark matrix from one local audio file:
 
 ```bash
 Tools/run_live_benchmark.py \
   --audio /Users/temelgunaydin/Downloads/output.wav \
   --duration 60 \
   --preset quick \
-  --compare-examples 3
+  --compare-examples 3 \
+  --last-examples 3 \
+  --repeated-segments 5
 ```
 
 The runner builds `HeptapodLiveSpeechDemo`, writes each trace/log under a
@@ -43,6 +45,8 @@ timestamped `/tmp/heptapod-live-benchmarks/...` directory, and generates a
 `report.md` with the same trace summary table format. Use `--preset matrix` for
 the six-case compact/quality and chunk-duration comparison, or pass custom cases
 with `--case label:asr:chunk_duration:max_buffered_segments`.
+Audio input can be WAV, M4A, MP3, or CAF if the local audio runtime can decode
+it.
 
 ## Result Template
 
