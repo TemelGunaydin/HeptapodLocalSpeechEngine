@@ -10,6 +10,7 @@ public protocol HeptapodSpeechPlaybackSink: Sendable {
 
 public enum HeptapodLiveSpeechEvent: Sendable {
     case segmentStarted(index: Int)
+    case audioLevel(index: Int, HeptapodAudioLevel)
     case silenceSkipped(index: Int)
     case transcript(index: Int, HeptapodTranscriptSegment)
     case translation(index: Int, HeptapodLiveTranslationResult)
@@ -20,6 +21,47 @@ public enum HeptapodLiveSpeechEvent: Sendable {
 public enum HeptapodLiveOutputMode: Sendable, Equatable {
     case speech
     case textOnly
+}
+
+public struct HeptapodAudioLevel: Sendable, Equatable {
+    public let rms: Double
+    public let peak: Double
+
+    public init(rms: Double, peak: Double) {
+        self.rms = rms
+        self.peak = peak
+    }
+
+    public static func measured(from chunk: HeptapodAudioChunk) -> HeptapodAudioLevel {
+        var sumSquares = 0.0
+        var peak = 0.0
+        var sampleCount = 0
+        let bytes = chunk.pcm16
+
+        bytes.withUnsafeBytes { rawBuffer in
+            let byteBuffer = rawBuffer.bindMemory(to: UInt8.self)
+            var byteIndex = 0
+            while byteIndex + 1 < byteBuffer.count {
+                let low = UInt16(byteBuffer[byteIndex])
+                let high = UInt16(byteBuffer[byteIndex + 1]) << 8
+                let sample = Int16(bitPattern: high | low)
+                let value = Double(sample) / 32768.0
+                sumSquares += value * value
+                peak = max(peak, abs(value))
+                sampleCount += 1
+                byteIndex += 2
+            }
+        }
+
+        guard sampleCount > 0 else {
+            return HeptapodAudioLevel(rms: 0, peak: 0)
+        }
+
+        return HeptapodAudioLevel(
+            rms: sqrt(sumSquares / Double(sampleCount)),
+            peak: peak
+        )
+    }
 }
 
 public struct HeptapodLiveTranslationResult: Sendable {
@@ -122,6 +164,7 @@ public actor HeptapodLiveSpeechSession {
                     for try await chunk in chunks {
                         index += 1
                         continuation.yield(.segmentStarted(index: index))
+                        continuation.yield(.audioLevel(index: index, .measured(from: chunk)))
 
                         guard let transcript = try await pipeline.transcribeSpeech(
                             chunk,
@@ -202,6 +245,7 @@ public actor HeptapodLiveSpeechSession {
                     for try await chunk in chunks {
                         index += 1
                         continuation.yield(.segmentStarted(index: index))
+                        continuation.yield(.audioLevel(index: index, .measured(from: chunk)))
 
                         let transcript: HeptapodTranscriptSegment?
                         let isSpeechBuffered: Bool

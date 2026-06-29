@@ -53,6 +53,8 @@ class TraceSummary:
     elapsed_seconds: float | None
     transcript_latency: LatencyStats
     translation_latency: LatencyStats
+    audio_rms: LatencyStats
+    audio_peak: LatencyStats
     examples: list[TranslationExample]
     repeated_translation_segments: list[RepeatedTranslationSegment]
 
@@ -63,6 +65,8 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
     elapsed_seconds: float | None = None
     transcript_latencies: list[float] = []
     translation_latencies: list[float] = []
+    audio_rms_values: list[float] = []
+    audio_peak_values: list[float] = []
     examples: list[TranslationExample] = []
     examples_by_index: dict[int, list[TranslationExample]] = defaultdict(list)
     run_finished = False
@@ -99,6 +103,14 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
                 elif event == "translation_ready":
                     translation_latencies.append(float(raw_latency))
 
+            if event == "audio_level":
+                raw_rms = item.get("audioRMS")
+                raw_peak = item.get("audioPeak")
+                if isinstance(raw_rms, (int, float)):
+                    audio_rms_values.append(float(raw_rms))
+                if isinstance(raw_peak, (int, float)):
+                    audio_peak_values.append(float(raw_peak))
+
             if event == "translation_ready":
                 transcript = str(item.get("transcriptText", "")).strip()
                 translation = str(item.get("translationText", "")).strip()
@@ -126,6 +138,8 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
         elapsed_seconds=elapsed_seconds,
         transcript_latency=LatencyStats.from_values(transcript_latencies),
         translation_latency=LatencyStats.from_values(translation_latencies),
+        audio_rms=LatencyStats.from_values(audio_rms_values),
+        audio_peak=LatencyStats.from_values(audio_peak_values),
         examples=examples,
         repeated_translation_segments=repeated_translation_segments,
     )
@@ -147,6 +161,12 @@ def format_seconds(value: float | None) -> str:
     return f"{value:.3f}s"
 
 
+def format_level(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.4f}"
+
+
 def format_repeated_translation_count(summary: TraceSummary) -> str:
     repeated_segments = len(summary.repeated_translation_segments)
     if repeated_segments == 0:
@@ -164,8 +184,8 @@ def first_command_arg(command: list[str], option: str) -> str:
 
 def markdown_table(summaries: list[TraceSummary]) -> str:
     rows = [
-        "| Trace | ASR | Chunk | Buffer | Segments | Transcripts | Translations | Repeated MT | ASR avg | MT avg | Finished |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |",
+        "| Trace | ASR | Chunk | Buffer | Segments | Audio RMS | Audio Peak | Transcripts | Translations | Repeated MT | ASR avg | MT avg | Finished |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |",
     ]
     for summary in summaries:
         command = summary.command
@@ -173,13 +193,16 @@ def markdown_table(summaries: list[TraceSummary]) -> str:
         chunk = first_command_arg(command, "--chunk-duration") or "n/a"
         buffer = first_command_arg(command, "--max-buffered-segments") or "n/a"
         rows.append(
-            "| {label} | {asr} | {chunk} | {buffer} | {segments} | {transcripts} | "
-            "{translations} | {repeated_translations} | {asr_avg} | {mt_avg} | {finished} |".format(
+            "| {label} | {asr} | {chunk} | {buffer} | {segments} | {audio_rms} | "
+            "{audio_peak} | {transcripts} | {translations} | {repeated_translations} | "
+            "{asr_avg} | {mt_avg} | {finished} |".format(
                 label=summary.label,
                 asr=asr,
                 chunk=chunk,
                 buffer=buffer,
                 segments=summary.events["segment_started"],
+                audio_rms=format_level(summary.audio_rms.average),
+                audio_peak=format_level(summary.audio_peak.maximum),
                 transcripts=summary.events["transcript_ready"],
                 translations=summary.events["translation_ready"],
                 repeated_translations=format_repeated_translation_count(summary),

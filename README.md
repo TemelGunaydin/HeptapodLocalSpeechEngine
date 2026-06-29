@@ -210,9 +210,9 @@ audio playback events.
 
 Use `--trace /tmp/heptapod-run.jsonl` to write JSON-lines timestamps for later
 performance comparison. The trace records run start/finish, segment starts,
-translation/result-ready latency, playback completion latency when speech output
-is enabled, transcript text, translation text, generated audio byte count, and
-the command used for the run.
+per-segment audio RMS/peak levels, translation/result-ready latency, playback
+completion latency when speech output is enabled, transcript text, translation
+text, generated audio byte count, and the command used for the run.
 
 Repeatable system-audio smoke test:
 

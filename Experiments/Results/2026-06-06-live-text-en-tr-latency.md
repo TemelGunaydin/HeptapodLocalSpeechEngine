@@ -313,3 +313,51 @@ swift run HeptapodLiveSpeechDemo -- \
 3. Try a true streaming ASR backend after the Qwen quality path is stable.
 4. Only after ASR improves further, compare MADLAD with another MT option.
 5. Treat SeamlessM4T as an offline quality reference, not the immediate live low-latency path.
+
+## 2026-06-29 System-Audio Playback Diagnostics
+
+`Tools/run_live_benchmark.py` now records per-segment audio RMS and peak levels
+in trace summaries. This makes silent system capture failures visible before
+VAD/ASR/MT are blamed.
+
+The same 16 kHz mono WAV fixture was run two ways:
+
+| Source | Runner report | Status | Segments | Audio RMS | Audio Peak | Transcripts | Translations | ASR avg | MT avg |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| file-backed fixture | `/private/tmp/heptapod-file-runner-smoke-v3/report.md` | ok | 10 | 0.1093 | 0.7570 | 10 | 4 | 0.114s | 0.645s |
+| system-audio + `afplay` fixture | `/private/tmp/heptapod-system-runner-smoke-v6/report.md` | failed validation | 10 | 0.0000 | 0.0000 | 0 | 0 | n/a | n/a |
+
+Result: the fixture and pipeline are valid, but the automated `afplay` playback
+did not enter the ScreenCaptureKit system-audio stream on this run. The failure
+is now correctly reported as a silent capture, not as a successful benchmark.
+
+Command used for the passing file-backed baseline:
+
+```bash
+Tools/run_live_benchmark.py \
+  --audio /tmp/heptapod-local-fixture.wav \
+  --duration 10 \
+  --case file-smoke:compact:1.0:3 \
+  --min-translations 1 \
+  --examples 2 \
+  --last-examples 2 \
+  --repeated-segments 5 \
+  --skip-build \
+  --output-dir /tmp/heptapod-file-runner-smoke-v3
+```
+
+Command used for the failing silent-capture check:
+
+```bash
+Tools/run_live_benchmark.py \
+  --system-audio \
+  --playback-audio /tmp/heptapod-local-fixture.wav \
+  --duration 10 \
+  --case system-smoke:compact:1.0:3 \
+  --asr-stabilization \
+  --examples 2 \
+  --last-examples 2 \
+  --repeated-segments 5 \
+  --skip-build \
+  --output-dir /tmp/heptapod-system-runner-smoke-v6
+```

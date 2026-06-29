@@ -253,11 +253,14 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
     var resultIndexes: [Int] = []
     var playbackIndexes: [Int] = []
     var translations: [String] = []
+    var audioLevels: [HeptapodAudioLevel] = []
 
     for try await event in events {
         switch event {
         case .segmentStarted(let index):
             startedIndexes.append(index)
+        case .audioLevel(_, let level):
+            audioLevels.append(level)
         case .silenceSkipped(let index):
             skippedIndexes.append(index)
         case .result(let index, let result):
@@ -277,6 +280,9 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
     #expect(resultIndexes == [2])
     #expect(playbackIndexes == [2])
     #expect(translations == ["merhaba"])
+    #expect(audioLevels.count == 2)
+    #expect(audioLevels.first?.rms == 0)
+    #expect((audioLevels.last?.peak ?? 0) > 0)
     #expect(await playbackSink.playedCount() == 1)
 }
 
@@ -316,6 +322,8 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
         switch event {
         case .segmentStarted(let index):
             eventNames.append("segment-\(index)")
+        case .audioLevel:
+            break
         case .result(let index, _):
             eventNames.append("result-\(index)")
         case .transcript:
@@ -379,7 +387,7 @@ func liveSessionTextOnlyTranslatesWithoutSynthesisOrPlayback() async throws {
             eventNames.append("translation")
         case .playbackCompleted(let index):
             playbackIndexes.append(index)
-        case .segmentStarted, .silenceSkipped, .result:
+        case .segmentStarted, .audioLevel, .silenceSkipped, .result:
             break
         }
     }
@@ -433,7 +441,7 @@ func textOnlyBufferedTranslationNormalizesFragmentedTranscript() async throws {
             transcripts.append(transcript.text)
         case .translation(_, let result):
             translations.append(result.translation.translatedText)
-        case .segmentStarted, .silenceSkipped, .result, .playbackCompleted:
+        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .playbackCompleted:
             break
         }
     }
@@ -830,6 +838,8 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
         switch event {
         case .segmentStarted(let index):
             eventNames.append("segment-\(index)")
+        case .audioLevel:
+            break
         case .result(let index, _):
             eventNames.append("result-\(index)")
         case .transcript:

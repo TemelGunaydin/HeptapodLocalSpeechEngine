@@ -42,9 +42,11 @@ Tools/run_live_benchmark.py \
 
 The runner builds `HeptapodLiveSpeechDemo`, writes each trace/log under a
 timestamped `/tmp/heptapod-live-benchmarks/...` directory, and generates a
-`report.md` with the same trace summary table format. Use `--preset matrix` for
-the six-case compact/quality and chunk-duration comparison, or pass custom cases
-with `--case label:asr:chunk_duration:max_buffered_segments`.
+`report.md` with the same trace summary table format. Summary tables include
+audio RMS/peak columns so silent system-audio capture can be distinguished from
+VAD or ASR failures. Use `--preset matrix` for the six-case compact/quality and
+chunk-duration comparison, or pass custom cases with
+`--case label:asr:chunk_duration:max_buffered_segments`.
 Audio input can be WAV, M4A, MP3, or CAF if the local audio runtime can decode
 it.
 Use `--asr-stabilization` to force sliding-window stable-prefix ASR buffering in

@@ -414,6 +414,13 @@ struct HeptapodLiveSpeechDemo {
                 segmentStartTimes[index] = Date()
                 print("Segment \(index)")
                 try trace?.record(event: "segment_started", index: index)
+            case .audioLevel(let index, let level):
+                try trace?.record(
+                    event: "audio_level",
+                    index: index,
+                    audioRMS: level.rms,
+                    audioPeak: level.peak
+                )
             case .silenceSkipped(let index):
                 print("  VAD: silence, skipped")
                 try trace?.record(event: "silence_skipped", index: index)
@@ -882,6 +889,8 @@ private final class LiveTraceRecorder {
         translationText: String? = nil,
         speechBytes: Int? = nil,
         sampleRate: Int? = nil,
+        audioRMS: Double? = nil,
+        audioPeak: Double? = nil,
         resultLatencySeconds: TimeInterval? = nil,
         playbackLatencySeconds: TimeInterval? = nil
     ) throws {
@@ -897,6 +906,8 @@ private final class LiveTraceRecorder {
             translationText: translationText,
             speechBytes: speechBytes,
             sampleRate: sampleRate,
+            audioRMS: audioRMS,
+            audioPeak: audioPeak,
             resultLatencySeconds: resultLatencySeconds,
             playbackLatencySeconds: playbackLatencySeconds,
             command: CommandLine.arguments
@@ -918,6 +929,8 @@ private struct LiveTraceEvent: Encodable {
     let translationText: String?
     let speechBytes: Int?
     let sampleRate: Int?
+    let audioRMS: Double?
+    let audioPeak: Double?
     let resultLatencySeconds: TimeInterval?
     let playbackLatencySeconds: TimeInterval?
     let command: [String]
