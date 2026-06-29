@@ -52,6 +52,25 @@ text-only benchmark runs.
 The runner also prepares `mlx.metallib` after SwiftPM build so MLX can load its
 Metal kernels at runtime.
 
+Run a repeatable macOS system-audio smoke by playing a local file through
+`afplay` while the demo captures ScreenCaptureKit audio:
+
+```bash
+Tools/run_live_benchmark.py \
+  --system-audio \
+  --playback-audio /tmp/heptapod-local-fixture.wav \
+  --duration 10 \
+  --case system-smoke:compact:1.0:3 \
+  --asr-stabilization \
+  --examples 3 \
+  --last-examples 3 \
+  --repeated-segments 5
+```
+
+When `--playback-audio` is used, the runner expects at least one
+`translation_ready` event by default. Use `--min-translations 0` only when you
+explicitly want to permit a silent capture run.
+
 On machines where the active Xcode beta SDK is newer than the installed Swift
 compiler, the runner automatically builds with the latest compatible macOS SDK
 under `/Library/Developer/CommandLineTools/SDKs`.

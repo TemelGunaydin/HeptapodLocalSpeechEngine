@@ -214,6 +214,25 @@ translation/result-ready latency, playback completion latency when speech output
 is enabled, transcript text, translation text, generated audio byte count, and
 the command used for the run.
 
+Repeatable system-audio smoke test:
+
+```bash
+Tools/run_live_benchmark.py \
+  --system-audio \
+  --playback-audio /tmp/heptapod-local-fixture.wav \
+  --duration 10 \
+  --case system-smoke:compact:1.0:3 \
+  --asr-stabilization \
+  --examples 3 \
+  --last-examples 3 \
+  --repeated-segments 5
+```
+
+This uses the same ScreenCaptureKit path as YouTube/browser audio, but plays a
+known local fixture through `afplay` so latency and transcript regressions can be
+reproduced. Playback-audio runs require at least one `translation_ready` event
+by default, so silent capture is reported as a failed case.
+
 More natural Chatterbox TTS output:
 
 ```bash

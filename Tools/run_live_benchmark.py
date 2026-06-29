@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -103,11 +106,27 @@ def run_command(
     log_path: Path | None = None,
     dry_run: bool = False,
     env: dict[str, str] | None = None,
+    playback_audio_path: Path | None = None,
+    playback_delay_seconds: float = 0.0,
 ) -> int:
     printable = printable_command(command, env=env)
     if dry_run:
+        if playback_audio_path is not None:
+            print("# playback starts after the demo reports that system-audio capture began")
+            print(printable_playback_command(playback_audio_path, playback_delay_seconds))
         print(printable)
         return 0
+
+    if playback_audio_path is not None:
+        if log_path is None:
+            raise ValueError("playback monitoring requires a log file")
+        return run_logged_command_with_capture_playback(
+            command,
+            log_path=log_path,
+            env=env,
+            playback_audio_path=playback_audio_path,
+            playback_delay_seconds=playback_delay_seconds,
+        )
 
     if log_path is None:
         completed = subprocess.run(command, cwd=REPO_ROOT, env=env, check=False)
@@ -127,6 +146,97 @@ def run_command(
         )
         handle.write(f"\nexit_code={completed.returncode}\n")
         return completed.returncode
+
+
+def run_logged_command_with_capture_playback(
+    command: list[str],
+    *,
+    log_path: Path,
+    env: dict[str, str] | None,
+    playback_audio_path: Path,
+    playback_delay_seconds: float,
+) -> int:
+    printable = printable_command(command, env=env)
+    playback_command = printable_playback_command(playback_audio_path, playback_delay_seconds)
+    playback_process: subprocess.Popen[bytes] | None = None
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", encoding="utf-8") as handle:
+        handle.write("$ # playback starts after the demo reports that system-audio capture began\n")
+        handle.write(f"$ {playback_command}\n")
+        handle.write(f"$ {printable}\n\n")
+        handle.flush()
+
+        process = subprocess.Popen(
+            command,
+            cwd=REPO_ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        assert process.stdout is not None
+
+        try:
+            for line in process.stdout:
+                handle.write(line)
+                handle.flush()
+                if playback_process is None and "Capturing macOS system audio" in line:
+                    playback_process = start_delayed_playback(
+                        playback_audio_path,
+                        playback_delay_seconds,
+                        stdout=handle,
+                        stderr=subprocess.STDOUT,
+                    )
+            return_code = process.wait()
+        finally:
+            stop_playback(playback_process)
+
+        handle.write(f"\nexit_code={return_code}\n")
+        return return_code
+
+
+def printable_playback_command(audio_path: Path, delay_seconds: float) -> str:
+    return "( sleep {delay}; afplay {audio} ) &".format(
+        delay=format_number(delay_seconds),
+        audio=shlex.quote(str(audio_path)),
+    )
+
+
+def start_delayed_playback(
+    audio_path: Path | None,
+    delay_seconds: float,
+    *,
+    stdout,
+    stderr,
+) -> subprocess.Popen[bytes] | None:
+    if audio_path is None:
+        return None
+    return subprocess.Popen(
+        [
+            "/bin/sh",
+            "-c",
+            "sleep \"$1\"; exec afplay \"$2\"",
+            "heptapod-afplay",
+            format_number(delay_seconds),
+            str(audio_path),
+        ],
+        cwd=REPO_ROOT,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def stop_playback(process: subprocess.Popen[bytes] | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=3)
 
 
 def printable_command(command: list[str], *, env: dict[str, str] | None = None) -> str:
@@ -206,7 +316,8 @@ def compatible_macos_sdk_root() -> Path | None:
 def benchmark_command(
     case: BenchmarkCase,
     *,
-    audio_path: Path,
+    audio_path: Path | None,
+    uses_system_audio: bool,
     target_language: str,
     duration_seconds: float,
     trace_path: Path,
@@ -215,24 +326,32 @@ def benchmark_command(
     command = [
         str(DEMO_BINARY),
         "--real",
-        "--audio",
-        str(audio_path),
-        "--to",
-        target_language,
-        "--asr",
-        case.asr,
-        "--latency",
-        "balanced",
-        "--chunk-duration",
-        format_number(case.chunk_duration),
-        "--max-buffered-segments",
-        str(case.max_buffered_segments),
-        "--text-only",
-        "--duration",
-        format_number(duration_seconds),
-        "--trace",
-        str(trace_path),
     ]
+    if uses_system_audio:
+        command.append("--system-audio")
+    else:
+        if audio_path is None:
+            raise ValueError("audio_path is required for file-backed benchmarks")
+        command.extend(["--audio", str(audio_path)])
+    command.extend(
+        [
+            "--to",
+            target_language,
+            "--asr",
+            case.asr,
+            "--latency",
+            "balanced",
+            "--chunk-duration",
+            format_number(case.chunk_duration),
+            "--max-buffered-segments",
+            str(case.max_buffered_segments),
+            "--text-only",
+            "--duration",
+            format_number(duration_seconds),
+            "--trace",
+            str(trace_path),
+        ]
+    )
     if uses_asr_stabilization:
         command.append("--asr-stabilization")
     return command
@@ -247,7 +366,10 @@ def format_number(value: float) -> str:
 def make_report(
     *,
     output_dir: Path,
-    audio_path: Path,
+    audio_path: Path | None,
+    uses_system_audio: bool,
+    playback_audio_path: Path | None,
+    playback_delay_seconds: float,
     target_language: str,
     duration_seconds: float,
     cases: list[BenchmarkCase],
@@ -257,15 +379,16 @@ def make_report(
     last_examples: int,
     repeated_segments: int,
     uses_asr_stabilization: bool,
+    minimum_translations: int,
 ) -> Path:
     report_path = output_dir / "report.md"
     summary = ""
-    successful = [result for result in results if result.succeeded and result.trace_path.exists()]
-    if successful:
+    summarizable = [result for result in results if result.trace_path.exists()]
+    if summarizable:
         summary_command = [
             sys.executable,
             str(TRACE_SUMMARY),
-            *[f"{result.case.label}={result.trace_path}" for result in successful],
+            *[f"{result.case.label}={result.trace_path}" for result in summarizable],
             "--examples",
             str(examples),
             "--compare-examples",
@@ -293,16 +416,29 @@ def make_report(
         "",
         f"Date: {datetime.now().isoformat(timespec='seconds')}",
         f"Commit: {git_commit()}",
-        f"Audio: `{audio_path}`",
+        f"Source: `{source_description(audio_path, uses_system_audio)}`",
         f"Target language: `{target_language}`",
         f"Duration: `{format_number(duration_seconds)}s`",
         f"Output directory: `{output_dir}`",
-        "",
-        "## Cases",
-        "",
-        "| Label | ASR | Chunk | Buffer | Status | Trace | Log |",
-        "| --- | --- | ---: | ---: | --- | --- | --- |",
     ]
+    if playback_audio_path is not None:
+        lines.extend(
+            [
+                f"Playback audio: `{playback_audio_path}`",
+                f"Playback delay: `{format_number(playback_delay_seconds)}s`",
+            ]
+        )
+    if minimum_translations > 0:
+        lines.append(f"Minimum translations: `{minimum_translations}`")
+    lines.extend(
+        [
+            "",
+            "## Cases",
+            "",
+            "| Label | ASR | Chunk | Buffer | Status | Trace | Log |",
+            "| --- | --- | ---: | ---: | --- | --- | --- |",
+        ]
+    )
 
     result_by_label = {result.case.label: result for result in results}
     for case in cases:
@@ -343,10 +479,12 @@ def make_report(
                 f"### {result.case.label}",
                 "",
                 "```bash",
+                *playback_command_lines(playback_audio_path, playback_delay_seconds),
                 " ".join(
                     benchmark_command(
                         result.case,
                         audio_path=audio_path,
+                        uses_system_audio=uses_system_audio,
                         target_language=target_language,
                         duration_seconds=duration_seconds,
                         trace_path=result.trace_path,
@@ -360,6 +498,61 @@ def make_report(
 
     report_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return report_path
+
+
+def source_description(audio_path: Path | None, uses_system_audio: bool) -> str:
+    if uses_system_audio:
+        return "macOS system audio"
+    return str(audio_path) if audio_path is not None else "audio file"
+
+
+def playback_command_lines(audio_path: Path | None, delay_seconds: float) -> list[str]:
+    if audio_path is None:
+        return []
+    return [
+        "# playback starts after the demo reports that system-audio capture began",
+        printable_playback_command(audio_path, delay_seconds),
+    ]
+
+
+def count_trace_events(path: Path, event_name: str) -> int:
+    count = 0
+    if not path.exists():
+        return count
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                item = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if item.get("event") == event_name:
+                count += 1
+    return count
+
+
+def validate_trace_expectations(
+    trace_path: Path,
+    *,
+    log_path: Path,
+    minimum_translations: int,
+) -> int:
+    if minimum_translations <= 0:
+        return 0
+
+    translation_count = count_trace_events(trace_path, "translation_ready")
+    if translation_count >= minimum_translations:
+        return 0
+
+    message = (
+        "validation failed: expected at least "
+        f"{minimum_translations} translation_ready event(s), found {translation_count}"
+    )
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n{message}\n")
+    return 90
 
 
 def git_commit() -> str:
@@ -382,9 +575,24 @@ def main() -> int:
     )
     parser.add_argument(
         "--audio",
-        required=True,
         type=Path,
-        help="Input audio file readable by the local audio runtime, such as WAV, M4A, MP3, or CAF.",
+        help="Input audio file for file-backed benchmarks. WAV, M4A, MP3, or CAF are expected.",
+    )
+    parser.add_argument(
+        "--system-audio",
+        action="store_true",
+        help="Capture macOS system audio instead of streaming --audio directly.",
+    )
+    parser.add_argument(
+        "--playback-audio",
+        type=Path,
+        help="Optional local audio file to play with afplay during --system-audio benchmarks.",
+    )
+    parser.add_argument(
+        "--playback-delay",
+        type=float,
+        default=3.0,
+        help="Seconds to wait before starting --playback-audio after capture begins.",
     )
     parser.add_argument("--to", default="tr", help="Target language code.")
     parser.add_argument("--duration", type=float, default=60.0, help="Seconds to process.")
@@ -431,20 +639,49 @@ def main() -> int:
         action="store_true",
         help="Force sliding-window stable-prefix ASR buffering in text-only benchmark runs.",
     )
+    parser.add_argument(
+        "--min-translations",
+        type=int,
+        default=None,
+        help="Fail a case unless its trace contains at least this many translation_ready events. Defaults to 1 when --playback-audio is used, otherwise 0.",
+    )
     parser.add_argument("--skip-build", action="store_true", help="Do not run swift build first.")
     parser.add_argument("--keep-going", action="store_true", help="Run remaining cases after a failure.")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them.")
     args = parser.parse_args()
 
-    audio_path = args.audio.expanduser().resolve()
+    audio_path = args.audio.expanduser().resolve() if args.audio else None
+    playback_audio_path = args.playback_audio.expanduser().resolve() if args.playback_audio else None
     output_dir = args.output_dir.expanduser().resolve()
     cases = args.cases or default_cases(args.preset)
 
     if args.duration <= 0:
         parser.error("--duration must be positive")
+    if args.playback_delay < 0:
+        parser.error("--playback-delay cannot be negative")
+    if args.min_translations is not None and args.min_translations < 0:
+        parser.error("--min-translations cannot be negative")
 
-    if not args.dry_run and not audio_path.exists():
+    if args.system_audio:
+        if audio_path is not None:
+            parser.error("--audio is for file-backed benchmarks; use --playback-audio with --system-audio")
+    elif audio_path is None:
+        parser.error("--audio is required unless --system-audio is used")
+    elif playback_audio_path is not None:
+        parser.error("--playback-audio requires --system-audio")
+
+    minimum_translations = (
+        args.min_translations
+        if args.min_translations is not None
+        else (1 if playback_audio_path is not None else 0)
+    )
+
+    if not args.dry_run and audio_path is not None and not audio_path.exists():
         parser.error(f"audio file does not exist: {audio_path}")
+    if not args.dry_run and playback_audio_path is not None and not playback_audio_path.exists():
+        parser.error(f"playback audio file does not exist: {playback_audio_path}")
+    if not args.dry_run and playback_audio_path is not None and shutil.which("afplay") is None:
+        parser.error("afplay is required for --playback-audio")
 
     if not args.skip_build:
         build_command = ["swift", "build", "--product", DEMO_PRODUCT]
@@ -466,6 +703,7 @@ def main() -> int:
         command = benchmark_command(
             case,
             audio_path=audio_path,
+            uses_system_audio=args.system_audio,
             target_language=args.to,
             duration_seconds=args.duration,
             trace_path=trace_path,
@@ -476,7 +714,15 @@ def main() -> int:
             log_path=log_path,
             dry_run=args.dry_run,
             env=model_runtime_environment(),
+            playback_audio_path=playback_audio_path,
+            playback_delay_seconds=args.playback_delay,
         )
+        if not args.dry_run and status == 0:
+            status = validate_trace_expectations(
+                trace_path,
+                log_path=log_path,
+                minimum_translations=minimum_translations,
+            )
         results.append(RunResult(case, trace_path, log_path, status))
         if status != 0 and not args.keep_going:
             break
@@ -488,6 +734,9 @@ def main() -> int:
     report_path = make_report(
         output_dir=output_dir,
         audio_path=audio_path,
+        uses_system_audio=args.system_audio,
+        playback_audio_path=playback_audio_path,
+        playback_delay_seconds=args.playback_delay,
         target_language=args.to,
         duration_seconds=args.duration,
         cases=cases,
@@ -497,6 +746,7 @@ def main() -> int:
         last_examples=args.last_examples,
         repeated_segments=args.repeated_segments,
         uses_asr_stabilization=args.asr_stabilization,
+        minimum_translations=minimum_translations,
     )
     print(report_path)
 
