@@ -293,11 +293,7 @@ Let me ask you something.
 ## Current Recommended Command
 
 ```bash
-swift run HeptapodLiveSpeechDemo -- \
-  --real \
-  --system-audio \
-  --play-output \
-  --trace /tmp/heptapod-live-tr.jsonl
+Tools/run_live_translation.sh
 ```
 
 ## Next Benchmarks

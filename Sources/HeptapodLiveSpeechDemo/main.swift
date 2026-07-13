@@ -142,13 +142,13 @@ struct HeptapodLiveSpeechDemo {
     private static func printUsage() {
         print("""
         Usage:
-          swift run HeptapodLiveSpeechDemo
-          swift run HeptapodLiveSpeechDemo -- --interactive
-          swift run HeptapodLiveSpeechDemo -- --cache-status
-          swift run HeptapodLiveSpeechDemo -- --real --audio /path/to/input.wav --to es --output-dir /tmp/heptapod-live
-          swift run HeptapodLiveSpeechDemo -- --real --microphone --to es --duration 10 --play-output
-          swift run HeptapodLiveSpeechDemo -- --real --system-audio --to tr --play-output
-          swift run HeptapodLiveSpeechDemo -- --real --system-audio --to tr --tts chatterbox --play-output
+          xcrun swift run HeptapodLiveSpeechDemo
+          xcrun swift run HeptapodLiveSpeechDemo -- --interactive
+          xcrun swift run HeptapodLiveSpeechDemo -- --cache-status
+          xcrun swift run HeptapodLiveSpeechDemo -- --real --audio /path/to/input.wav --to es --output-dir /tmp/heptapod-live
+          xcrun swift run HeptapodLiveSpeechDemo -- --real --microphone --to es --duration 10 --play-output
+          Tools/run_live_translation.sh
+          Tools/run_live_translation.sh --tts chatterbox --tts-device mps
 
         Options:
           --interactive       Type preview text segments on stdin.
@@ -222,7 +222,7 @@ struct HeptapodLiveSpeechDemo {
             shouldSpeak: shouldSpeak
         )
 
-        print("\nDone. Use `swift run HeptapodLiveSpeechDemo -- --interactive` to type live segments.")
+        print("\nDone. Use `xcrun swift run HeptapodLiveSpeechDemo -- --interactive` to type live segments.")
     }
 
     private static func runInteractiveDemo(

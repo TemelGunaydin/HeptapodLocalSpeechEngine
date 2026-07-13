@@ -114,25 +114,25 @@ The direct path is important to track because it is conceptually closest to Open
 Scripted pipeline preview without real inference:
 
 ```bash
-swift run HeptapodLiveSpeechDemo
+xcrun swift run HeptapodLiveSpeechDemo
 ```
 
 Preview interactive live session:
 
 ```bash
-swift run HeptapodLiveSpeechDemo -- --interactive
+xcrun swift run HeptapodLiveSpeechDemo -- --interactive
 ```
 
 Starter model cache status:
 
 ```bash
-swift run HeptapodLiveSpeechDemo -- --cache-status
+xcrun swift run HeptapodLiveSpeechDemo -- --cache-status
 ```
 
 Real file-backed live session:
 
 ```bash
-HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
+HF_DOWNLOAD_STALL_TIMEOUT=600 xcrun swift run HeptapodLiveSpeechDemo -- \
   --real \
   --audio /path/to/input.wav \
   --to es \
@@ -145,7 +145,7 @@ AVFoundation formats such as WAV, M4A, MP3, and CAF.
 Real microphone live session:
 
 ```bash
-HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
+HF_DOWNLOAD_STALL_TIMEOUT=600 xcrun swift run HeptapodLiveSpeechDemo -- \
   --real \
   --microphone \
   --to es \
@@ -156,16 +156,19 @@ HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
 Real macOS system-audio live session:
 
 ```bash
-HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
-  --real \
-  --system-audio \
-  --play-output
+Tools/run_live_translation.sh
 ```
 
 This defaults to English/auto-detected source audio, Turkish output, compact
 Qwen ASR, the balanced `1.0s / 4 segment` endpointing profile, and the installed
 macOS Turkish voice. The pipeline is fully local after model weights are cached.
 It does not use WebSocket or a local server.
+
+The launcher intentionally uses `xcrun swift`, so the Swift compiler and macOS
+SDK come from the same active Xcode toolchain. A bare `swift` command may resolve
+to Swiftly while selecting a newer Command Line Tools SDK, which produces an
+`SDK is not supported by the compiler` error. Extra demo options can be appended
+directly, for example `Tools/run_live_translation.sh --duration 60`.
 
 Live audio sources use sentence/pause buffering by default: ASR results are
 accumulated while the speaker is talking, then translation and TTS run when a
@@ -185,7 +188,7 @@ observability; use `--asr-stabilization` to force it on or
 Latency tuning:
 
 ```bash
-swift run HeptapodLiveSpeechDemo -- \
+xcrun swift run HeptapodLiveSpeechDemo -- \
   --real \
   --system-audio \
   --to tr \
@@ -254,13 +257,10 @@ More natural Chatterbox TTS output:
 /opt/homebrew/bin/python3.11 -m venv .venv-chatterbox311
 .venv-chatterbox311/bin/pip install chatterbox-tts torchaudio
 
-HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodLiveSpeechDemo -- \
-  --real \
-  --system-audio \
-  --to tr \
+Tools/run_live_translation.sh \
   --tts chatterbox \
   --tts-python .venv-chatterbox311/bin/python \
-  --play-output
+  --tts-device mps
 ```
 
 Chatterbox uses a persistent Python worker by default, so the model is loaded
@@ -286,7 +286,7 @@ the command if capture fails the first time.
 Real local model smoke test from an audio file:
 
 ```bash
-HF_DOWNLOAD_STALL_TIMEOUT=600 swift run HeptapodRealSpeechDemo -- \
+HF_DOWNLOAD_STALL_TIMEOUT=600 xcrun swift run HeptapodRealSpeechDemo -- \
   --audio /path/to/input.wav \
   --from en \
   --to es \
@@ -314,13 +314,12 @@ xcodebuild -downloadComponent MetalToolchain
 BUILD_DIR="$(pwd)/.build" .build/checkouts/speech-swift/scripts/build_mlx_metallib.sh debug
 ```
 
-If the active Xcode beta SDK is newer than the installed Swift compiler, build
-with the compatible Command Line Tools SDK:
+If `swift` resolves to a Swiftly installation, do not combine that compiler with
+the Command Line Tools `MacOSX.sdk` symlink. Use `xcrun` so the compiler and SDK
+come from the same selected Xcode installation:
 
 ```bash
-SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
-DEVELOPER_DIR=/Library/Developer/CommandLineTools \
-swift build --product HeptapodLiveSpeechDemo
+xcrun swift build --product HeptapodLiveSpeechDemo
 ```
 
 ## Model Families In The Catalog
