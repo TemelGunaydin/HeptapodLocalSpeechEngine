@@ -31,7 +31,7 @@ struct HeptapodLiveSpeechDemo {
                 throw DemoError.liveAudioRequiresRealMode
             }
 
-            let targetLanguageCode = options.targetLanguageCode ?? (options.usesRealModels ? "es" : "tr")
+            let targetLanguageCode = options.targetLanguageCode ?? "tr"
             let pipeline = try makePipeline(options: options)
 
             try await pipeline.prepare(includeSynthesis: options.usesTextOnly == false)
@@ -158,9 +158,9 @@ struct HeptapodLiveSpeechDemo {
           --microphone        Capture live microphone audio chunks.
           --system-audio      Capture macOS system audio with ScreenCaptureKit.
           --duration <sec>    Stop live/file audio after this many seconds.
-          --to <code>         Target language. Default: tr for preview, es for real mode.
+          --to <code>         Target language. Default: tr.
           --asr <name>        Real mode ASR backend: compact or quality. Default: compact.
-          --latency <preset>  Live timing preset: low, balanced, or quality. Default: low.
+          --latency <preset>  Live timing preset: low, balanced, or quality. Default: balanced.
           --chunk-duration <sec>
                               Audio chunk size for live/file demos. Lower is faster but less stable.
           --max-buffered-segments <count>
@@ -171,7 +171,8 @@ struct HeptapodLiveSpeechDemo {
                               Force sliding-window stable-prefix ASR buffering.
           --no-asr-stabilization
                               Disable sliding-window stable-prefix ASR buffering.
-          --tts <name>        Real mode TTS backend: kokoro or chatterbox. Default: kokoro.
+          --tts <name>        Real mode TTS backend: apple, kokoro, or chatterbox.
+                              Default: apple for Turkish on macOS; kokoro otherwise.
           --tts-script <path> Chatterbox bridge script. Default: Tools/chatterbox_tts.py.
           --tts-python <name> Python executable for Chatterbox. Default: python3.
           --tts-device <name> Chatterbox torch device: auto, cpu, mps, or cuda.
@@ -355,7 +356,7 @@ struct HeptapodLiveSpeechDemo {
             sinks.append(fileSink)
         }
         if shouldPlayOutput {
-            sinks.append(HeptapodAVAudioPlaybackSink())
+            sinks.append(HeptapodAVAudioPlaybackSink(playbackRate: 1.15))
         }
 
         if sinks.isEmpty {
@@ -401,7 +402,9 @@ struct HeptapodLiveSpeechDemo {
             : await session.run(chunks: chunks)
 
         var segmentStartTimes: [Int: Date] = [:]
+        var transcriptTimes: [Int: Date] = [:]
         var resultTimes: [Int: Date] = [:]
+        var playbackStartTimes: [Int: Date] = [:]
         let trace = try tracePath.map { try LiveTraceRecorder(path: $0) }
         try trace?.record(
             event: "run_started",
@@ -427,6 +430,7 @@ struct HeptapodLiveSpeechDemo {
                 try trace?.record(event: "silence_skipped", index: index)
             case .transcript(let index, let transcript):
                 printTranscript(transcript)
+                transcriptTimes[index] = Date()
                 let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
                 try trace?.record(
                     event: "transcript_ready",
@@ -437,8 +441,12 @@ struct HeptapodLiveSpeechDemo {
             case .result(let index, let result):
                 printResult(result)
                 let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
+                let outputLatencySeconds = transcriptTimes[index].map { Date().timeIntervalSince($0) }
                 if let startedAt = segmentStartTimes[index] {
                     print("  Timing: result ready +\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
+                }
+                if let transcriptAt = transcriptTimes[index] {
+                    print("  Timing: MT + TTS +\(String(format: "%.2f", Date().timeIntervalSince(transcriptAt)))s")
                 }
                 resultTimes[index] = Date()
                 try trace?.record(
@@ -448,7 +456,8 @@ struct HeptapodLiveSpeechDemo {
                     translationText: result.translation.translatedText,
                     speechBytes: result.speech.pcm16.count,
                     sampleRate: result.speech.sampleRate,
-                    resultLatencySeconds: resultLatencySeconds
+                    resultLatencySeconds: resultLatencySeconds,
+                    outputLatencySeconds: outputLatencySeconds
                 )
                 if shouldSpeak {
                     speak(result.translation.translatedText)
@@ -456,6 +465,7 @@ struct HeptapodLiveSpeechDemo {
             case .translation(let index, let result):
                 printTranslationResult(result)
                 let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
+                let outputLatencySeconds = transcriptTimes[index].map { Date().timeIntervalSince($0) }
                 if let startedAt = segmentStartTimes[index] {
                     print("  Timing: translation ready +\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
                 }
@@ -464,19 +474,33 @@ struct HeptapodLiveSpeechDemo {
                     index: index,
                     transcriptText: result.transcript.text,
                     translationText: result.translation.translatedText,
-                    resultLatencySeconds: resultLatencySeconds
+                    resultLatencySeconds: resultLatencySeconds,
+                    outputLatencySeconds: outputLatencySeconds
+                )
+            case .playbackStarted(let index):
+                let startedAt = Date()
+                playbackStartTimes[index] = startedAt
+                let playbackLatencySeconds = resultTimes[index].map { startedAt.timeIntervalSince($0) }
+                if let resultAt = resultTimes[index] {
+                    print("  Playback: started +\(String(format: "%.2f", startedAt.timeIntervalSince(resultAt)))s after result")
+                }
+                try trace?.record(
+                    event: "playback_started",
+                    index: index,
+                    playbackLatencySeconds: playbackLatencySeconds
                 )
             case .playbackCompleted(let index):
-                let playbackLatencySeconds = resultTimes[index].map { Date().timeIntervalSince($0) }
-                if let resultAt = resultTimes[index] {
-                    print("  Playback: completed +\(String(format: "%.2f", Date().timeIntervalSince(resultAt)))s after result")
-                } else {
-                    print("  Playback: completed")
+                let completedAt = Date()
+                let playbackLatencySeconds = resultTimes[index].map { completedAt.timeIntervalSince($0) }
+                let playbackDurationSeconds = playbackStartTimes[index].map { completedAt.timeIntervalSince($0) }
+                if let playbackStartedAt = playbackStartTimes[index] {
+                    print("  Playback: completed in \(String(format: "%.2f", completedAt.timeIntervalSince(playbackStartedAt)))s")
                 }
                 try trace?.record(
                     event: "playback_completed",
                     index: index,
-                    playbackLatencySeconds: playbackLatencySeconds
+                    playbackLatencySeconds: playbackLatencySeconds,
+                    playbackDurationSeconds: playbackDurationSeconds
                 )
             }
         }
@@ -484,8 +508,6 @@ struct HeptapodLiveSpeechDemo {
     }
 
     private static func printResult(_ result: HeptapodSpeechToSpeechResult) {
-        print("  VAD: speech")
-        print("  ASR: \(result.transcript.text)")
         print("  MT:  \(result.translation.translatedText)")
         print("  TTS: \(result.speech.pcm16.count) PCM bytes at \(result.speech.sampleRate) Hz")
     }
@@ -548,14 +570,14 @@ private struct DemoOptions {
         var shouldPrintCacheStatus = false
         var usesTextOnly = false
         var usesSentenceBuffering = true
-        var latencyPreset = DemoLatencyPreset.low
+        var latencyPreset = DemoLatencyPreset.balanced
         var chunkDurationSeconds: Double?
         var maximumBufferedSegments: Int?
         var usesPunctuationEndpoint = false
         var usesASRStabilization: Bool?
         var asrPreset = DemoASRPreset.compact
         var targetLanguageCode: String?
-        var ttsBackend = DemoTTSBackend.kokoro
+        var ttsBackend: DemoTTSBackend?
         var ttsScriptPath: String?
         var ttsPythonExecutable = "python3"
         var ttsDevice: String?
@@ -679,7 +701,9 @@ private struct DemoOptions {
         self.usesASRStabilization = usesASRStabilization ?? (usesTextOnly ? false : latencyPreset.usesASRStabilization)
         self.asrPreset = asrPreset
         self.targetLanguageCode = targetLanguageCode
-        self.ttsBackend = ttsBackend
+        self.ttsBackend = ttsBackend ?? Self.defaultTTSBackend(
+            targetLanguageCode: targetLanguageCode ?? "tr"
+        )
         self.ttsScriptPath = ttsScriptPath
         self.ttsPythonExecutable = ttsPythonExecutable
         self.ttsDevice = ttsDevice
@@ -698,6 +722,21 @@ private struct DemoOptions {
         }
         index = valueIndex
         return arguments[valueIndex]
+    }
+
+    private static func defaultTTSBackend(targetLanguageCode: String) -> DemoTTSBackend {
+        let baseLanguageCode = targetLanguageCode
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+            .split(separator: "-", maxSplits: 1)
+            .first
+            .map(String.init) ?? targetLanguageCode
+        #if os(macOS)
+        if baseLanguageCode == "tr" {
+            return .apple
+        }
+        #endif
+        return .kokoro
     }
 
     var sourceDescription: String {
@@ -748,6 +787,8 @@ private struct DemoOptions {
 
     var ttsDescriptor: HeptapodModelDescriptor {
         switch ttsBackend {
+        case .apple:
+            HeptapodModelDescriptor.macOSSystemTTS
         case .kokoro:
             HeptapodModelDescriptor.kokoroTTS
         case .chatterbox:
@@ -757,6 +798,7 @@ private struct DemoOptions {
 }
 
 private enum DemoTTSBackend: String {
+    case apple
     case kokoro
     case chatterbox
 }
@@ -805,7 +847,7 @@ private enum DemoLatencyPreset: String {
         case .low:
             1
         case .balanced:
-            3
+            4
         case .quality:
             8
         }
@@ -813,9 +855,9 @@ private enum DemoLatencyPreset: String {
 
     var usesPunctuationEndpoint: Bool {
         switch self {
-        case .low:
+        case .low, .balanced:
             true
-        case .balanced, .quality:
+        case .quality:
             false
         }
     }
@@ -893,7 +935,9 @@ private final class LiveTraceRecorder {
         audioRMS: Double? = nil,
         audioPeak: Double? = nil,
         resultLatencySeconds: TimeInterval? = nil,
-        playbackLatencySeconds: TimeInterval? = nil
+        outputLatencySeconds: TimeInterval? = nil,
+        playbackLatencySeconds: TimeInterval? = nil,
+        playbackDurationSeconds: TimeInterval? = nil
     ) throws {
         let now = Date()
         let traceEvent = LiveTraceEvent(
@@ -910,7 +954,9 @@ private final class LiveTraceRecorder {
             audioRMS: audioRMS,
             audioPeak: audioPeak,
             resultLatencySeconds: resultLatencySeconds,
+            outputLatencySeconds: outputLatencySeconds,
             playbackLatencySeconds: playbackLatencySeconds,
+            playbackDurationSeconds: playbackDurationSeconds,
             command: CommandLine.arguments
         )
         var data = try encoder.encode(traceEvent)
@@ -933,7 +979,9 @@ private struct LiveTraceEvent: Encodable {
     let audioRMS: Double?
     let audioPeak: Double?
     let resultLatencySeconds: TimeInterval?
+    let outputLatencySeconds: TimeInterval?
     let playbackLatencySeconds: TimeInterval?
+    let playbackDurationSeconds: TimeInterval?
     let command: [String]
 }
 
@@ -973,7 +1021,7 @@ private enum DemoError: LocalizedError {
         case .invalidPositiveOption(let option, let value):
             "Invalid value for \(option): \(value)."
         case .invalidTTSBackend(let value):
-            "Invalid TTS backend: \(value). Use kokoro or chatterbox."
+            "Invalid TTS backend: \(value). Use apple, kokoro, or chatterbox."
         case .invalidTTSDevice(let value):
             "Invalid TTS device: \(value). Use auto, cpu, mps, or cuda."
         case .audioFileRequiresRealMode:

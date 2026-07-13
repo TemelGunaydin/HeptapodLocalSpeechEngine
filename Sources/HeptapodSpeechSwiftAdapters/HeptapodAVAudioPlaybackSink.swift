@@ -5,11 +5,15 @@ import HeptapodLocalSpeechEngine
 public actor HeptapodAVAudioPlaybackSink: HeptapodSpeechPlaybackSink {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    private let timePitch = AVAudioUnitTimePitch()
+    private let playbackRate: Float
     private var isPrepared = false
     private var playbackSampleRate: Double?
     private var playbackChannelCount: AVAudioChannelCount?
 
-    public init() {}
+    public init(playbackRate: Float = 1) {
+        self.playbackRate = min(max(playbackRate, 0.5), 2)
+    }
 
     public func play(_ speech: HeptapodSynthesizedSpeech) async throws {
         guard let format = AVAudioFormat(
@@ -61,12 +65,16 @@ public actor HeptapodAVAudioPlaybackSink: HeptapodSpeechPlaybackSink {
         if isPrepared {
             player.stop()
             engine.disconnectNodeOutput(player)
+            engine.disconnectNodeOutput(timePitch)
             engine.stop()
         } else {
             engine.attach(player)
+            engine.attach(timePitch)
         }
 
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        timePitch.rate = playbackRate
+        engine.connect(player, to: timePitch, format: format)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: format)
         engine.prepare()
         if engine.isRunning == false {
             try engine.start()

@@ -51,6 +51,9 @@ Audio input can be WAV, M4A, MP3, or CAF if the local audio runtime can decode
 it.
 Use `--asr-stabilization` to force sliding-window stable-prefix ASR buffering in
 text-only benchmark runs.
+Use `--punctuation-endpoint` to flush complete ASR sentences before the maximum
+buffer limit. Add `--speech-output --tts apple --play-output` to benchmark the
+full local speech path and validate `result_ready` plus playback events.
 The runner also prepares `mlx.metallib` after SwiftPM build so MLX can load its
 Metal kernels at runtime.
 
@@ -64,8 +67,12 @@ Tools/run_live_benchmark.py \
   --playback-browser chrome \
   --playback-delay 1 \
   --duration 16 \
-  --case browser-smoke:compact:1.0:3 \
+  --case browser-smoke:compact:1.0:4 \
   --asr-stabilization \
+  --punctuation-endpoint \
+  --speech-output \
+  --tts apple \
+  --play-output \
   --examples 3 \
   --last-examples 3 \
   --repeated-segments 5
@@ -76,9 +83,9 @@ process group after the run. `afplay` remains the default when
 `--playback-browser` is omitted, but it was not visible to ScreenCaptureKit in
 the tested configuration.
 
-When `--playback-audio` is used, the runner expects at least one
-`translation_ready` event by default. Use `--min-translations 0` only when you
-explicitly want to permit a silent capture run.
+When `--playback-audio` is used, the runner expects at least one output event by
+default. Use `--min-outputs 0` only when you explicitly want to permit a silent
+capture run.
 
 On machines where the active Xcode beta SDK is newer than the installed Swift
 compiler, the runner automatically builds with the latest compatible macOS SDK

@@ -121,16 +121,16 @@ flowchart LR
 The system-audio path captures macOS output through ScreenCaptureKit, converts it
 to 16 kHz mono PCM chunks, and feeds the same live session as microphone and file
 input. macOS may require Screen Recording permission for the terminal process.
-Live audio sources now use sentence/pause endpointing by default: ASR text is
-buffered while speech continues, then translation and TTS run after a silence
-endpoint or stream end. `--chunk-translation` keeps the older per-chunk behavior
-for debugging latency.
+Live audio sources use sentence/pause endpointing by default: ASR text is
+buffered while speech continues, then translation and TTS run after punctuation,
+a silence endpoint, the four-segment safety limit, or stream end.
+`--chunk-translation` keeps the older per-chunk behavior for debugging latency.
 The demo exposes `--latency low|balanced|quality`, `--chunk-duration`,
 `--max-buffered-segments`, `--punctuation-endpoint`, and
 `--no-asr-stabilization` so the cascaded local pipeline can move along the
 speed/quality tradeoff without changing code.
-`--trace <path>` writes JSON-lines event timestamps so runs can be compared
-afterward without screen scraping terminal output.
+`--trace <path>` writes JSON-lines timestamps for ASR-ready, post-ASR output,
+and playback completion so runs can be compared without terminal scraping.
 `--text-only` skips TTS model preparation, synthesis, playback, and WAV output.
 That mode is currently the recommended low-latency local test path when the
 available offline voices are not natural enough.
@@ -150,18 +150,23 @@ The Qwen ASR adapter remains chunk-based, but the live session now wraps it in a
 ring-buffer/sliding-window policy. It decodes recent audio context, compares
 neighboring hypotheses, commits only stable prefix deltas downstream, and flushes
 the latest uncommitted hypothesis on a silence endpoint.
-The low-latency preset is intentionally aggressive: 0.75 second capture chunks,
-one stable-prefix word, and one buffered ASR segment before translation/TTS
-flush. Balanced and quality presets keep larger buffers for more natural
-translation.
+The balanced preset is the live default: 1 second chunks, stable-prefix ASR,
+punctuation endpoints, and a four-segment safety flush. The low preset is
+intentionally aggressive at 0.75 second chunks and one buffered segment.
 
 The synthesis queue and playback queue are serial and nonblocking for the input
 loop. This gives the pipeline a backbuffer-like shape: later segments can be
-translated and synthesized while an earlier segment is still playing. Chatterbox
-TTS also has a persistent Python worker mode, which avoids per-segment process
-startup and model reload overhead. The next OpenAI-like step is a model-native
-streaming ASR backend and streaming TTS deltas instead of whole-segment WAV
-output.
+translated and synthesized while an earlier segment is still playing. The
+native macOS Turkish voice is the current fast live backend. Chatterbox has a
+persistent Python worker but remains a quality reference because its tested
+post-ASR output latency was about 23 seconds. The next OpenAI-like step is a
+model-native streaming ASR backend and streaming TTS deltas instead of
+whole-segment WAV output.
+
+The demo time-stretches live speaker playback to `1.15x` through
+`AVAudioUnitTimePitch` while preserving pitch. File sink WAVs retain the
+original 210 WPM synthesis output. Trace events distinguish output-ready,
+playback-start queue wait, and playback duration.
 
 The remaining work is app-level polish: permission UX, background audio
 behavior, streaming partial-ASR improvements, and production playback

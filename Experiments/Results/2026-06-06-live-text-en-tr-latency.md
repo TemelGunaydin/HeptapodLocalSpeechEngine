@@ -295,15 +295,9 @@ Let me ask you something.
 ```bash
 swift run HeptapodLiveSpeechDemo -- \
   --real \
-  --audio ../../Downloads/output.wav \
-  --to tr \
-  --asr quality \
-  --latency balanced \
-  --chunk-duration 1.0 \
-  --max-buffered-segments 3 \
-  --text-only \
-  --duration 60 \
-  --trace /tmp/heptapod-audio-quality-v1.jsonl
+  --system-audio \
+  --play-output \
+  --trace /tmp/heptapod-live-tr.jsonl
 ```
 
 ## Next Benchmarks
@@ -393,3 +387,56 @@ Tools/run_live_benchmark.py \
   --last-examples 8 \
   --repeated-segments 5
 ```
+
+## 2026-07-13 Local Turkish Speech Output
+
+The browser fixture was extended through the full local speech path. The native
+macOS Turkish voice is now the live default; Chatterbox Multilingual remains a
+natural-voice reference backend.
+
+| Run | ASR / endpoint | TTS | Outputs | ASR avg | Post-ASR output avg | Start wait avg | Playback duration avg | Result |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Chatterbox V2 | compact, 1.0s / 3 | Chatterbox MPS | 2 | n/a | 22.975s | n/a | 5.439s legacy completion | correct audio, not live-speed |
+| Apple V5 | compact, 1.0s / 3 | Yelda, 210 WPM | 3 | 0.120s | 2.182s | n/a | 5.055s legacy completion | no repeated sliding-window tail |
+| Apple V6 | compact, 1.0s / 4 + punctuation | Yelda, 210 WPM | 4 | 0.129s | 1.664s | n/a | 4.396s legacy completion | natural sentence endpoints |
+| Apple V8 | compact, 1.0s / 4 + punctuation | Yelda + 1.15x playback | 4 | 0.128s | 1.900s | 0.913s | 3.002s | best measured live playback profile |
+| Apple quality V1 | quality, 1.0s / 4 + punctuation | Yelda, 210 WPM | 0 | n/a | n/a | n/a | n/a | startup exceeded 300s before capture-ready |
+
+Apple V8 command:
+
+```bash
+Tools/run_live_benchmark.py \
+  --system-audio \
+  --playback-audio /tmp/heptapod-local-fixture.wav \
+  --playback-browser chrome \
+  --playback-delay 1 \
+  --duration 16 \
+  --case browser-apple-v8:compact:1.0:4 \
+  --asr-stabilization \
+  --punctuation-endpoint \
+  --speech-output \
+  --tts apple \
+  --play-output \
+  --output-dir /tmp/heptapod-browser-apple-v8
+```
+
+The V4 trace exposed a shifted-window duplicate:
+
+```text
+...this short example helps compare latency without opening you to short sample helps compare latency...
+```
+
+The stabilizer now aligns corrected tails while tolerating up to two noisy words
+at either window boundary. The regression fixture and Apple V5/V6/V8 browser runs
+confirmed that the phrase is emitted once. Enabling punctuation endpointing and
+raising the safety buffer from three to four segments prevented the first
+English sentence from being split at `the audio | should be...`.
+
+V8 added separate playback-start and playback-duration timestamps. Pitch-
+preserving `1.15x` live playback reduced queue growth while leaving archived WAV
+files at the original 210 WPM synthesis rate. Compact ASR errors such as
+`live/lip` and `latency/legacy` remain the largest quality limitation.
+
+All stages in these runs were local: ScreenCaptureKit capture, MLX/CoreML ASR and
+VAD, MADLAD translation, native/Chatterbox TTS, and AVAudio playback. No server
+or WebSocket session was used.

@@ -1,10 +1,10 @@
 # Model Matrix
 
 All numbers are estimates until each adapter pins a model artifact and cache layout.
-The Silero VAD, Qwen3-ASR, MADLAD, and Kokoro combination is runnable today through
-`HeptapodSpeechSwiftAdapters` and the `HeptapodRealSpeechDemo` smoke test.
-Chatterbox is available as an optional local Python TTS bridge for more natural
-speech output.
+Silero VAD, Qwen3-ASR, MADLAD, native macOS voices, Kokoro, and Chatterbox are
+runnable today through `HeptapodSpeechSwiftAdapters`. Native macOS speech is the
+current low-latency Turkish backend; Chatterbox is the slower natural-voice
+reference.
 
 Nemotron 3.5 ASR Streaming is tracked through the MLX community conversion,
 not the original NeMo-only path. It currently needs `mlx-audio` with Nemotron
@@ -23,8 +23,9 @@ Swift-native adapter.
 | MT | MADLAD-400 3B | Adapter target ready | ~2.8 GB | Practical first local translator |
 | MT | NLLB Distilled 600M | Planned | ~1.6 GB | Translation quality candidate |
 | MT | SeamlessM4T text path | Research | ~4.8 GB | Heavy unified translation research |
-| TTS | Kokoro 82M | Adapter target ready | ~130 MB | Smallest useful TTS |
-| TTS | Chatterbox TTS | Python bridge ready | ~2.5 GB | More natural voice; requires local Python env |
+| TTS | macOS System Voice | Adapter target ready | 0 MB | Fast Turkish live default; uses installed voices |
+| TTS | Kokoro 82M | Adapter target ready | ~130 MB | Small supported-language TTS; no Turkish phonemizer |
+| TTS | Chatterbox TTS | Python bridge ready | ~4.3 GB | Natural Turkish; about 23s output latency in the tested run |
 | TTS | Qwen3 TTS 0.6B | Planned | ~1.2 GB | Natural local voice candidate |
 | TTS | CosyVoice3 0.5B | Planned | ~1.0 GB | Expressive TTS candidate |
 | Direct S2ST | SeamlessStreaming | Research | ~10 GB | Simultaneous direct S2ST/S2TT candidate |
@@ -35,7 +36,7 @@ Swift-native adapter.
 Starter:
 
 ```text
-Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + Kokoro
+Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + macOS System Voice
 ```
 
 Natural voice:

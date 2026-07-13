@@ -152,6 +152,23 @@ func speechSwiftFactoryReportsChatterboxPipelineRunnable() {
     #expect(readiness.selectedDescriptors.map(\.id).contains(HeptapodModelDescriptor.chatterboxTTS.id))
 }
 
+#if os(macOS)
+@Test
+func speechSwiftFactoryReportsMacOSSystemVoicePipelineRunnable() {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.macOSSystemTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
+
+    #expect(readiness.canRunInference)
+    #expect(readiness.unavailableDescriptors.isEmpty)
+    #expect(readiness.selectedDescriptors.map(\.id).contains(HeptapodModelDescriptor.macOSSystemTTS.id))
+}
+#endif
+
 @Test
 func speechSwiftFactoryBuildsPipelineWithoutLoadingModels() throws {
     _ = try HeptapodSpeechSwiftAdapterFactory.makePipeline()
@@ -177,6 +194,28 @@ func chatterboxAdapterReportsMissingScriptDuringPrepare() async {
         try await adapter.prepare()
     }
 }
+
+@Test
+func kokoroAdapterRejectsUnsupportedTurkishBeforeModelLoad() async {
+    let adapter = HeptapodKokoroTTSAdapter()
+
+    await #expect(throws: HeptapodKokoroTTSError.self) {
+        _ = try await adapter.synthesize("Merhaba", languageCode: "tr-TR", voiceID: nil)
+    }
+}
+
+#if os(macOS)
+@Test
+func macOSSystemVoiceAdapterReportsMissingExecutableDuringPrepare() async {
+    let adapter = HeptapodMacOSSpeechSynthesizerAdapter(
+        executableURL: URL(fileURLWithPath: "/tmp/heptapod-missing-say-\(UUID().uuidString)")
+    )
+
+    await #expect(throws: HeptapodMacOSSpeechSynthesizerError.self) {
+        try await adapter.prepare()
+    }
+}
+#endif
 
 @Test
 func speechSwiftCacheStatusesCoverStarterModels() throws {
@@ -251,6 +290,7 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
     var startedIndexes: [Int] = []
     var skippedIndexes: [Int] = []
     var resultIndexes: [Int] = []
+    var playbackStartIndexes: [Int] = []
     var playbackIndexes: [Int] = []
     var translations: [String] = []
     var audioLevels: [HeptapodAudioLevel] = []
@@ -270,6 +310,8 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
             break
         case .translation:
             break
+        case .playbackStarted(let index):
+            playbackStartIndexes.append(index)
         case .playbackCompleted(let index):
             playbackIndexes.append(index)
         }
@@ -278,6 +320,7 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
     #expect(startedIndexes == [1, 2])
     #expect(skippedIndexes == [1])
     #expect(resultIndexes == [2])
+    #expect(playbackStartIndexes == [2])
     #expect(playbackIndexes == [2])
     #expect(translations == ["merhaba"])
     #expect(audioLevels.count == 2)
@@ -329,6 +372,8 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
         case .transcript:
             break
         case .translation:
+            break
+        case .playbackStarted:
             break
         case .playbackCompleted(let index):
             eventNames.append("playback-\(index)")
@@ -387,7 +432,7 @@ func liveSessionTextOnlyTranslatesWithoutSynthesisOrPlayback() async throws {
             eventNames.append("translation")
         case .playbackCompleted(let index):
             playbackIndexes.append(index)
-        case .segmentStarted, .audioLevel, .silenceSkipped, .result:
+        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .playbackStarted:
             break
         }
     }
@@ -441,7 +486,7 @@ func textOnlyBufferedTranslationNormalizesFragmentedTranscript() async throws {
             transcripts.append(transcript.text)
         case .translation(_, let result):
             translations.append(result.translation.translatedText)
-        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .playbackCompleted:
+        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .playbackStarted, .playbackCompleted:
             break
         }
     }
@@ -846,7 +891,7 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
             break
         case .translation:
             break
-        case .silenceSkipped, .playbackCompleted:
+        case .silenceSkipped, .playbackStarted, .playbackCompleted:
             break
         }
     }
@@ -1234,6 +1279,62 @@ func sentenceBufferedLiveSessionMergesCorrectedSlidingTailAtStreamEnd() async th
 
     #expect(resultTexts == [
         "This short sample helps compare latency without opening YouTube"
+    ])
+}
+
+@Test
+func sentenceBufferedLiveSessionMergesCorrectedTailAfterLeadingWindowNoise() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: SequenceRecognizer([
+            "Quickly translated into Turkish and reported with timing in this short example helps compare latency without opening you to",
+            "Quickly translated into Turkish and reported with timing in this short example helps compare latency without opening you to",
+            "to short sample helps compare latency without opening YouTube",
+            "to short sample helps compare latency without opening YouTube"
+        ]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data([1]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([2]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([3]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([4]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        asrStabilization: HeptapodASRStabilizationConfiguration(
+            isEnabled: true,
+            maximumWindowChunks: 5,
+            minimumStableWords: 20
+        )
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == [
+        "Quickly translated into Turkish and reported with timing in this short sample helps compare latency without opening YouTube"
     ])
 }
 

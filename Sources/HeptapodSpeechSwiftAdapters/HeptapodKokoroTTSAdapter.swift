@@ -5,6 +5,9 @@ import KokoroTTS
 public actor HeptapodKokoroTTSAdapter: HeptapodSpeechSynthesizer {
     public static let defaultModelID = KokoroTTSModel.defaultModelId
     public static let outputSampleRate = KokoroTTSModel.outputSampleRate
+    public static let supportedLanguageCodes: Set<String> = [
+        "en", "fr", "es", "ja", "zh", "hi", "pt", "it"
+    ]
     public nonisolated let descriptor: HeptapodModelDescriptor
 
     private let modelID: String
@@ -36,11 +39,21 @@ public actor HeptapodKokoroTTSAdapter: HeptapodSpeechSynthesizer {
         languageCode: String,
         voiceID: String?
     ) async throws -> HeptapodSynthesizedSpeech {
+        let normalizedLanguageCode = languageCode
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+            .split(separator: "-", maxSplits: 1)
+            .first
+            .map(String.init) ?? languageCode
+        guard Self.supportedLanguageCodes.contains(normalizedLanguageCode) else {
+            throw HeptapodKokoroTTSError.unsupportedLanguage(languageCode)
+        }
+
         let model = try await preparedModel()
         let samples = try model.synthesize(
             text: text,
             voice: voiceID ?? defaultVoiceID,
-            language: languageCode
+            language: normalizedLanguageCode
         )
         return HeptapodSynthesizedSpeech(
             pcm16: HeptapodSpeechSwiftAudioSamples.pcm16Data(from: samples),
@@ -61,5 +74,16 @@ public actor HeptapodKokoroTTSAdapter: HeptapodSpeechSynthesizer {
         )
         model = loaded
         return loaded
+    }
+}
+
+public enum HeptapodKokoroTTSError: LocalizedError, Sendable {
+    case unsupportedLanguage(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupportedLanguage(let languageCode):
+            "Kokoro does not support language '\(languageCode)'. Use the macOS system voice or Chatterbox Multilingual for Turkish speech."
+        }
     }
 }

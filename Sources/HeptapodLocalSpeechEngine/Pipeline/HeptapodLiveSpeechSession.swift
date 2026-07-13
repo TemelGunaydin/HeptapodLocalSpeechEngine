@@ -15,6 +15,7 @@ public enum HeptapodLiveSpeechEvent: Sendable {
     case transcript(index: Int, HeptapodTranscriptSegment)
     case translation(index: Int, HeptapodLiveTranslationResult)
     case result(index: Int, HeptapodSpeechToSpeechResult)
+    case playbackStarted(index: Int)
     case playbackCompleted(index: Int)
 }
 
@@ -176,6 +177,7 @@ public actor HeptapodLiveSpeechSession {
 
                         switch outputMode {
                         case .speech:
+                            continuation.yield(.transcript(index: index, transcript))
                             let result = try await pipeline.translateAndSynthesize(
                                 transcript,
                                 sourceLanguageCode: sourceLanguageCode,
@@ -1105,6 +1107,10 @@ private struct SlidingASRStabilizer {
         if let overlap = containedCandidatePrefixOverlap(latest, in: earlier) {
             return Array(earlier.prefix(overlap.startIndex)) + latest
         }
+        if let overlap = approximateTailReplacementOverlap(earlier, latest) {
+            return Array(earlier.prefix(overlap.earlierStartIndex))
+                + Array(latest.dropFirst(overlap.latestStartIndex))
+        }
 
         let overlapCount = max(
             longestSuffixPrefixOverlap(earlier, latest),
@@ -1114,6 +1120,43 @@ private struct SlidingASRStabilizer {
             return nil
         }
         return Array(earlier.dropLast(overlapCount)) + latest
+    }
+
+    private static func approximateTailReplacementOverlap(
+        _ earlier: [String],
+        _ latest: [String]
+    ) -> (earlierStartIndex: Int, latestStartIndex: Int)? {
+        let maximumBoundaryNoise = 2
+        guard earlier.count >= 4, latest.count >= 4 else {
+            return nil
+        }
+
+        for count in stride(from: min(earlier.count, latest.count), through: 4, by: -1) {
+            for earlierTrailingNoise in 0...min(maximumBoundaryNoise, earlier.count - count) {
+                let earlierStartIndex = earlier.count - earlierTrailingNoise - count
+                let earlierSlice = earlier[earlierStartIndex..<(earlierStartIndex + count)]
+
+                for latestStartIndex in 0...min(maximumBoundaryNoise, latest.count - count) {
+                    let latestSlice = latest[latestStartIndex..<(latestStartIndex + count)]
+                    guard let earlierFirst = earlierSlice.first,
+                          let latestFirst = latestSlice.first,
+                          wordsMatch(earlierFirst, latestFirst) else {
+                        continue
+                    }
+
+                    let matchCount = zip(earlierSlice, latestSlice).reduce(into: 0) { matches, pair in
+                        if wordsMatch(pair.0, pair.1) {
+                            matches += 1
+                        }
+                    }
+                    let requiredMatches = max(3, (count * 2 + 2) / 3)
+                    if matchCount >= requiredMatches, count - matchCount <= 2 {
+                        return (earlierStartIndex, latestStartIndex)
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     private static func containedCandidatePrefixOverlap(
@@ -1219,6 +1262,9 @@ private actor LiveSynthesisQueue {
     }
 
     func enqueue(index: Int, transcript: HeptapodTranscriptSegment) {
+        if outputMode == .speech {
+            continuation.yield(.transcript(index: index, transcript))
+        }
         let previous = tail
         tail = Task {
             try await previous?.value
@@ -1278,6 +1324,7 @@ private actor LivePlaybackQueue {
         tail = Task {
             try await previous?.value
             try Task.checkCancellation()
+            continuation.yield(.playbackStarted(index: index))
             try await sink.play(speech)
             continuation.yield(.playbackCompleted(index: index))
         }

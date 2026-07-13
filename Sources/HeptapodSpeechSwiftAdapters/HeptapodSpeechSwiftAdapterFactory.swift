@@ -2,14 +2,20 @@ import Foundation
 import HeptapodLocalSpeechEngine
 
 public enum HeptapodSpeechSwiftAdapterFactory {
-    public static let implementedModelIDs: Set<String> = [
-        HeptapodModelDescriptor.sileroVAD.id,
-        HeptapodModelDescriptor.qwenASRCompact.id,
-        HeptapodModelDescriptor.qwenASRHighQuality.id,
-        HeptapodModelDescriptor.madladTranslator.id,
-        HeptapodModelDescriptor.chatterboxTTS.id,
-        HeptapodModelDescriptor.kokoroTTS.id
-    ]
+    public static let implementedModelIDs: Set<String> = {
+        var modelIDs: Set<String> = [
+            HeptapodModelDescriptor.sileroVAD.id,
+            HeptapodModelDescriptor.qwenASRCompact.id,
+            HeptapodModelDescriptor.qwenASRHighQuality.id,
+            HeptapodModelDescriptor.madladTranslator.id,
+            HeptapodModelDescriptor.chatterboxTTS.id,
+            HeptapodModelDescriptor.kokoroTTS.id
+        ]
+        #if os(macOS)
+        modelIDs.insert(HeptapodModelDescriptor.macOSSystemTTS.id)
+        #endif
+        return modelIDs
+    }()
 
     public static let starterFilePipelineConfiguration = HeptapodPipelineConfiguration(
         speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
@@ -96,6 +102,10 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         offlineMode: Bool
     ) -> any HeptapodSpeechSynthesizer {
         switch modelID {
+        #if os(macOS)
+        case HeptapodModelDescriptor.macOSSystemTTS.id:
+            HeptapodMacOSSpeechSynthesizerAdapter()
+        #endif
         case HeptapodModelDescriptor.chatterboxTTS.id:
             HeptapodChatterboxTTSAdapter(
                 pythonExecutable: chatterboxPythonExecutable,

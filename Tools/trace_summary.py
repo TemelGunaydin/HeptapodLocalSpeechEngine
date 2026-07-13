@@ -11,6 +11,9 @@ from pathlib import Path
 from statistics import mean
 
 
+OUTPUT_READY_EVENTS = {"translation_ready", "result_ready"}
+
+
 @dataclass(frozen=True)
 class LatencyStats:
     count: int
@@ -53,6 +56,8 @@ class TraceSummary:
     elapsed_seconds: float | None
     transcript_latency: LatencyStats
     translation_latency: LatencyStats
+    playback_start_latency: LatencyStats
+    playback_latency: LatencyStats
     audio_rms: LatencyStats
     audio_peak: LatencyStats
     examples: list[TranslationExample]
@@ -65,6 +70,8 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
     elapsed_seconds: float | None = None
     transcript_latencies: list[float] = []
     translation_latencies: list[float] = []
+    playback_start_latencies: list[float] = []
+    playback_latencies: list[float] = []
     audio_rms_values: list[float] = []
     audio_peak_values: list[float] = []
     examples: list[TranslationExample] = []
@@ -100,8 +107,23 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
             if isinstance(raw_latency, (int, float)):
                 if event == "transcript_ready":
                     transcript_latencies.append(float(raw_latency))
-                elif event == "translation_ready":
+
+            if event in OUTPUT_READY_EVENTS:
+                raw_output_latency = item.get("outputLatencySeconds")
+                if isinstance(raw_output_latency, (int, float)):
+                    translation_latencies.append(float(raw_output_latency))
+                elif isinstance(raw_latency, (int, float)):
                     translation_latencies.append(float(raw_latency))
+
+            raw_playback_latency = item.get("playbackLatencySeconds")
+            if event == "playback_started" and isinstance(raw_playback_latency, (int, float)):
+                playback_start_latencies.append(float(raw_playback_latency))
+            if event == "playback_completed":
+                raw_playback_duration = item.get("playbackDurationSeconds")
+                if isinstance(raw_playback_duration, (int, float)):
+                    playback_latencies.append(float(raw_playback_duration))
+                elif isinstance(raw_playback_latency, (int, float)):
+                    playback_latencies.append(float(raw_playback_latency))
 
             if event == "audio_level":
                 raw_rms = item.get("audioRMS")
@@ -111,7 +133,7 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
                 if isinstance(raw_peak, (int, float)):
                     audio_peak_values.append(float(raw_peak))
 
-            if event == "translation_ready":
+            if event in OUTPUT_READY_EVENTS:
                 transcript = str(item.get("transcriptText", "")).strip()
                 translation = str(item.get("translationText", "")).strip()
                 example = TranslationExample(
@@ -138,6 +160,8 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
         elapsed_seconds=elapsed_seconds,
         transcript_latency=LatencyStats.from_values(transcript_latencies),
         translation_latency=LatencyStats.from_values(translation_latencies),
+        playback_start_latency=LatencyStats.from_values(playback_start_latencies),
+        playback_latency=LatencyStats.from_values(playback_latencies),
         audio_rms=LatencyStats.from_values(audio_rms_values),
         audio_peak=LatencyStats.from_values(audio_peak_values),
         examples=examples,
@@ -184,8 +208,8 @@ def first_command_arg(command: list[str], option: str) -> str:
 
 def markdown_table(summaries: list[TraceSummary]) -> str:
     rows = [
-        "| Trace | ASR | Chunk | Buffer | Segments | Audio RMS | Audio Peak | Transcripts | Translations | Repeated MT | ASR avg | MT avg | Finished |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |",
+        "| Trace | ASR | Chunk | Buffer | Segments | Audio RMS | Audio Peak | Transcripts | Outputs | Repeated MT | ASR avg | Output avg | Playbacks | Start avg | Duration avg | Finished |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for summary in summaries:
         command = summary.command
@@ -195,7 +219,7 @@ def markdown_table(summaries: list[TraceSummary]) -> str:
         rows.append(
             "| {label} | {asr} | {chunk} | {buffer} | {segments} | {audio_rms} | "
             "{audio_peak} | {transcripts} | {translations} | {repeated_translations} | "
-            "{asr_avg} | {mt_avg} | {finished} |".format(
+            "{asr_avg} | {mt_avg} | {playbacks} | {playback_start_avg} | {playback_avg} | {finished} |".format(
                 label=summary.label,
                 asr=asr,
                 chunk=chunk,
@@ -204,10 +228,13 @@ def markdown_table(summaries: list[TraceSummary]) -> str:
                 audio_rms=format_level(summary.audio_rms.average),
                 audio_peak=format_level(summary.audio_peak.maximum),
                 transcripts=summary.events["transcript_ready"],
-                translations=summary.events["translation_ready"],
+                translations=sum(summary.events[event] for event in OUTPUT_READY_EVENTS),
                 repeated_translations=format_repeated_translation_count(summary),
                 asr_avg=format_seconds(summary.transcript_latency.average),
                 mt_avg=format_seconds(summary.translation_latency.average),
+                playbacks=summary.events["playback_completed"],
+                playback_start_avg=format_seconds(summary.playback_start_latency.average),
+                playback_avg=format_seconds(summary.playback_latency.average),
                 finished="yes" if summary.run_finished else "no",
             )
         )

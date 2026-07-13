@@ -27,6 +27,7 @@ COMMAND_LINE_TOOLS_SDKS = COMMAND_LINE_TOOLS / "SDKs"
 MLX_METALLIB_SCRIPT = REPO_ROOT / ".build" / "checkouts" / "speech-swift" / "scripts" / "build_mlx_metallib.sh"
 BROWSER_PLAYBACK_PAGE = REPO_ROOT / "Tools" / "system_audio_browser_playback.html"
 GOOGLE_CHROME_BINARY = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+KOKORO_LANGUAGE_CODES = {"en", "fr", "es", "ja", "zh", "hi", "pt", "it"}
 
 
 @dataclass(frozen=True)
@@ -403,6 +404,13 @@ def benchmark_command(
     duration_seconds: float,
     trace_path: Path,
     uses_asr_stabilization: bool,
+    uses_punctuation_endpoint: bool,
+    uses_speech_output: bool,
+    tts_backend: str,
+    tts_python_executable: str,
+    tts_device: str,
+    plays_output: bool,
+    speech_output_dir: Path | None,
 ) -> list[str]:
     command = [
         str(DEMO_BINARY),
@@ -426,15 +434,35 @@ def benchmark_command(
             format_number(case.chunk_duration),
             "--max-buffered-segments",
             str(case.max_buffered_segments),
-            "--text-only",
             "--duration",
             format_number(duration_seconds),
             "--trace",
             str(trace_path),
         ]
     )
+    if uses_speech_output:
+        command.extend(["--tts", tts_backend])
+        if speech_output_dir is not None:
+            command.extend(["--output-dir", str(speech_output_dir)])
+        if plays_output:
+            command.append("--play-output")
+        if tts_backend == "chatterbox":
+            command.extend(
+                [
+                    "--tts-script",
+                    str(REPO_ROOT / "Tools" / "chatterbox_tts.py"),
+                    "--tts-python",
+                    tts_python_executable,
+                    "--tts-device",
+                    tts_device,
+                ]
+            )
+    else:
+        command.append("--text-only")
     if uses_asr_stabilization:
         command.append("--asr-stabilization")
+    if uses_punctuation_endpoint:
+        command.append("--punctuation-endpoint")
     return command
 
 
@@ -462,7 +490,13 @@ def make_report(
     last_examples: int,
     repeated_segments: int,
     uses_asr_stabilization: bool,
-    minimum_translations: int,
+    uses_punctuation_endpoint: bool,
+    uses_speech_output: bool,
+    tts_backend: str,
+    tts_python_executable: str,
+    tts_device: str,
+    plays_output: bool,
+    minimum_outputs: int,
 ) -> Path:
     report_path = output_dir / "report.md"
     summary = ""
@@ -501,9 +535,17 @@ def make_report(
         f"Commit: {git_commit()}",
         f"Source: `{source_description(audio_path, uses_system_audio)}`",
         f"Target language: `{target_language}`",
+        f"Output mode: `{'speech' if uses_speech_output else 'text'}`",
         f"Duration: `{format_number(duration_seconds)}s`",
         f"Output directory: `{output_dir}`",
     ]
+    if uses_speech_output:
+        lines.extend(
+            [
+                f"TTS: `{tts_backend}`",
+                f"Speaker playback: `{'on' if plays_output else 'off'}`",
+            ]
+        )
     if playback_audio_path is not None:
         lines.extend(
             [
@@ -513,8 +555,9 @@ def make_report(
         )
         if playback_browser is not None:
             lines.append(f"Playback browser: `{playback_browser}`")
-    if minimum_translations > 0:
-        lines.append(f"Minimum translations: `{minimum_translations}`")
+    if minimum_outputs > 0:
+        lines.append(f"Minimum outputs: `{minimum_outputs}`")
+    lines.append(f"Punctuation endpoint: `{'on' if uses_punctuation_endpoint else 'off'}`")
     lines.extend(
         [
             "",
@@ -579,6 +622,15 @@ def make_report(
                         duration_seconds=duration_seconds,
                         trace_path=result.trace_path,
                         uses_asr_stabilization=uses_asr_stabilization,
+                        uses_punctuation_endpoint=uses_punctuation_endpoint,
+                        uses_speech_output=uses_speech_output,
+                        tts_backend=tts_backend,
+                        tts_python_executable=tts_python_executable,
+                        tts_device=tts_device,
+                        plays_output=plays_output,
+                        speech_output_dir=(output_dir / "audio" / result.case.slug)
+                        if uses_speech_output
+                        else None,
                     )
                 ),
                 "```",
@@ -638,22 +690,35 @@ def validate_trace_expectations(
     trace_path: Path,
     *,
     log_path: Path,
-    minimum_translations: int,
+    output_event_name: str,
+    minimum_outputs: int,
+    requires_playback: bool,
 ) -> int:
-    if minimum_translations <= 0:
+    if minimum_outputs <= 0:
         return 0
 
-    translation_count = count_trace_events(trace_path, "translation_ready")
-    if translation_count >= minimum_translations:
-        return 0
+    output_count = count_trace_events(trace_path, output_event_name)
+    if output_count < minimum_outputs:
+        message = (
+            "validation failed: expected at least "
+            f"{minimum_outputs} {output_event_name} event(s), found {output_count}"
+        )
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n{message}\n")
+        return 90
 
-    message = (
-        "validation failed: expected at least "
-        f"{minimum_translations} translation_ready event(s), found {translation_count}"
-    )
-    with log_path.open("a", encoding="utf-8") as handle:
-        handle.write(f"\n{message}\n")
-    return 90
+    if requires_playback:
+        playback_count = count_trace_events(trace_path, "playback_completed")
+        if playback_count < minimum_outputs:
+            message = (
+                "validation failed: expected at least "
+                f"{minimum_outputs} playback_completed event(s), found {playback_count}"
+            )
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"\n{message}\n")
+            return 91
+
+    return 0
 
 
 def git_commit() -> str:
@@ -743,13 +808,47 @@ def main() -> int:
     parser.add_argument(
         "--asr-stabilization",
         action="store_true",
-        help="Force sliding-window stable-prefix ASR buffering in text-only benchmark runs.",
+        help="Force sliding-window stable-prefix ASR buffering.",
     )
     parser.add_argument(
+        "--punctuation-endpoint",
+        action="store_true",
+        help="Flush buffered speech as soon as ASR emits terminal punctuation.",
+    )
+    parser.add_argument(
+        "--speech-output",
+        action="store_true",
+        help="Run MT plus TTS and write synthesized WAV segments instead of text-only output.",
+    )
+    parser.add_argument(
+        "--tts",
+        choices=["apple", "kokoro", "chatterbox"],
+        default="apple",
+        help="TTS backend used with --speech-output. Defaults to the macOS system voice.",
+    )
+    parser.add_argument(
+        "--tts-python",
+        default=".venv-chatterbox311/bin/python",
+        help="Python executable used by the Chatterbox bridge.",
+    )
+    parser.add_argument(
+        "--tts-device",
+        choices=["auto", "cpu", "mps", "cuda"],
+        default="auto",
+        help="Torch device used by Chatterbox.",
+    )
+    parser.add_argument(
+        "--play-output",
+        action="store_true",
+        help="Play synthesized speech through the default audio output; requires --speech-output.",
+    )
+    parser.add_argument(
+        "--min-outputs",
         "--min-translations",
+        dest="min_outputs",
         type=int,
         default=None,
-        help="Fail a case unless its trace contains at least this many translation_ready events. Defaults to 1 when --playback-audio is used, otherwise 0.",
+        help="Fail a case unless its trace contains at least this many output events. Defaults to 1 when --playback-audio is used, otherwise 0.",
     )
     parser.add_argument("--skip-build", action="store_true", help="Do not run swift build first.")
     parser.add_argument("--keep-going", action="store_true", help="Run remaining cases after a failure.")
@@ -760,14 +859,30 @@ def main() -> int:
     playback_audio_path = args.playback_audio.expanduser().resolve() if args.playback_audio else None
     output_dir = args.output_dir.expanduser().resolve()
     playback_browser_profile_dir = output_dir / "playback-browser-profile" if args.playback_browser else None
+    tts_python_path = Path(args.tts_python).expanduser()
+    tts_python_executable = (
+        str(tts_python_path)
+        if tts_python_path.is_absolute()
+        else str((REPO_ROOT / tts_python_path).absolute())
+        if tts_python_path.parent != Path(".")
+        else args.tts_python
+    )
     cases = args.cases or default_cases(args.preset)
 
     if args.duration <= 0:
         parser.error("--duration must be positive")
     if args.playback_delay < 0:
         parser.error("--playback-delay cannot be negative")
-    if args.min_translations is not None and args.min_translations < 0:
-        parser.error("--min-translations cannot be negative")
+    if args.min_outputs is not None and args.min_outputs < 0:
+        parser.error("--min-outputs cannot be negative")
+    if args.play_output and not args.speech_output:
+        parser.error("--play-output requires --speech-output")
+
+    target_language = args.to.strip().lower().replace("_", "-").split("-", maxsplit=1)[0]
+    if args.speech_output and args.tts == "kokoro" and target_language not in KOKORO_LANGUAGE_CODES:
+        parser.error(
+            f"Kokoro does not support target language '{args.to}'; use --tts apple or --tts chatterbox"
+        )
 
     if args.system_audio:
         if audio_path is not None:
@@ -779,9 +894,9 @@ def main() -> int:
     if args.playback_browser and playback_audio_path is None:
         parser.error("--playback-browser requires --playback-audio")
 
-    minimum_translations = (
-        args.min_translations
-        if args.min_translations is not None
+    minimum_outputs = (
+        args.min_outputs
+        if args.min_outputs is not None
         else (1 if playback_audio_path is not None else 0)
     )
 
@@ -795,6 +910,14 @@ def main() -> int:
         parser.error(f"browser playback page is missing: {BROWSER_PLAYBACK_PAGE}")
     if not args.dry_run and playback_audio_path is not None and args.playback_browser is None and shutil.which("afplay") is None:
         parser.error("afplay is required for --playback-audio")
+    if not args.dry_run and args.speech_output and args.tts == "chatterbox":
+        if not (REPO_ROOT / "Tools" / "chatterbox_tts.py").exists():
+            parser.error("Tools/chatterbox_tts.py is required for Chatterbox")
+        if Path(tts_python_executable).is_absolute():
+            if not Path(tts_python_executable).is_file():
+                parser.error(f"Chatterbox Python executable does not exist: {tts_python_executable}")
+        elif shutil.which(tts_python_executable) is None:
+            parser.error(f"Chatterbox Python executable was not found: {tts_python_executable}")
 
     if not args.skip_build:
         build_command = ["swift", "build", "--product", DEMO_PRODUCT]
@@ -813,6 +936,7 @@ def main() -> int:
     for case in cases:
         trace_path = output_dir / "traces" / f"{case.slug}.jsonl"
         log_path = output_dir / "logs" / f"{case.slug}.log"
+        speech_output_dir = output_dir / "audio" / case.slug if args.speech_output else None
         command = benchmark_command(
             case,
             audio_path=audio_path,
@@ -821,6 +945,13 @@ def main() -> int:
             duration_seconds=args.duration,
             trace_path=trace_path,
             uses_asr_stabilization=args.asr_stabilization,
+            uses_punctuation_endpoint=args.punctuation_endpoint,
+            uses_speech_output=args.speech_output,
+            tts_backend=args.tts,
+            tts_python_executable=tts_python_executable,
+            tts_device=args.tts_device,
+            plays_output=args.play_output,
+            speech_output_dir=speech_output_dir,
         )
         status = run_command(
             command,
@@ -836,7 +967,9 @@ def main() -> int:
             status = validate_trace_expectations(
                 trace_path,
                 log_path=log_path,
-                minimum_translations=minimum_translations,
+                output_event_name="result_ready" if args.speech_output else "translation_ready",
+                minimum_outputs=minimum_outputs,
+                requires_playback=args.play_output,
             )
         results.append(RunResult(case, trace_path, log_path, status))
         if status != 0 and not args.keep_going:
@@ -863,7 +996,13 @@ def main() -> int:
         last_examples=args.last_examples,
         repeated_segments=args.repeated_segments,
         uses_asr_stabilization=args.asr_stabilization,
-        minimum_translations=minimum_translations,
+        uses_punctuation_endpoint=args.punctuation_endpoint,
+        uses_speech_output=args.speech_output,
+        tts_backend=args.tts,
+        tts_python_executable=tts_python_executable,
+        tts_device=args.tts_device,
+        plays_output=args.play_output,
+        minimum_outputs=minimum_outputs,
     )
     print(report_path)
 

@@ -35,6 +35,7 @@ public struct HeptapodModelCatalog: Sendable {
         .seamlessTextTranslator,
         .qwenTTSCompact,
         .chatterboxTTS,
+        .macOSSystemTTS,
         .kokoroTTS,
         .cosyVoiceTTS,
         .seamlessStreamingDirectSpeech,
@@ -352,6 +353,27 @@ public extension HeptapodModelDescriptor {
         summary: "More human-sounding TTS path for local live translation.",
         tradeoffs: "Requires a local Python environment with chatterbox-tts installed; first synthesis may be slower than Kokoro.",
         licenseNote: "Chatterbox source is MIT; verify selected model weights and voice prompt rights before distribution."
+    )
+
+    static let macOSSystemTTS = HeptapodModelDescriptor(
+        id: "tts.apple.macos.system",
+        stage: .speechSynthesis,
+        displayName: "macOS System Voice",
+        provider: "Apple",
+        family: "Speech Synthesis",
+        backend: .custom,
+        capabilities: [.batchTTS],
+        qualityTier: .balanced,
+        latencyTier: .realtime,
+        status: .adapterRequired,
+        footprint: HeptapodModelFootprint(
+            downloadSize: HeptapodByteSize(0),
+            installedSize: HeptapodByteSize(0),
+            recommendedMemory: .megabytes(256)
+        ),
+        languageCoverage: HeptapodLanguageCoverage(notes: "Uses voices installed in macOS, including the Turkish Yelda voice when available."),
+        summary: "Fast native speech output for live macOS translation.",
+        tradeoffs: "Much faster than neural Chatterbox, but voice naturalness depends on the installed system voice."
     )
 
     static let cosyVoiceTTS = HeptapodModelDescriptor(

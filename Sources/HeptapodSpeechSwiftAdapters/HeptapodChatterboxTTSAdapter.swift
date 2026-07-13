@@ -23,7 +23,7 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
         voicePromptURL: URL? = nil,
         device: String? = nil,
         outputSampleRate: Int = HeptapodChatterboxTTSAdapter.defaultOutputSampleRate,
-        timeoutSeconds: TimeInterval = 120,
+        timeoutSeconds: TimeInterval = 600,
         usesPersistentWorker: Bool = true,
         fileManager: FileManager = .default
     ) {
@@ -46,6 +46,9 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
         }
         if let voicePromptURL, fileManager.fileExists(atPath: voicePromptURL.path) == false {
             throw HeptapodChatterboxTTSError.missingVoicePrompt(voicePromptURL.path)
+        }
+        if usesPersistentWorker {
+            _ = try ensureWorker(languageCode: "en")
         }
     }
 
@@ -320,7 +323,7 @@ private final class ChatterboxWorker {
         try process.run()
         let readyLine = try lineReader.readLine(deadline: Date().addingTimeInterval(timeoutSeconds))
         guard let readyLine else {
-            throw HeptapodChatterboxTTSError.processFailed(status: process.terminationStatus, output: try stderrText())
+            throw try processFailure()
         }
         let ready = try decoder.decode(ChatterboxWorkerReadyResponse.self, from: Data(readyLine.utf8))
         guard ready.ready else {
@@ -330,15 +333,16 @@ private final class ChatterboxWorker {
 
     deinit {
         try? input.close()
-        try? stderr.close()
         if process.isRunning {
             process.terminate()
         }
+        process.waitUntilExit()
+        try? stderr.close()
     }
 
     func send(_ request: ChatterboxWorkerRequest) throws -> ChatterboxWorkerResponse {
         guard process.isRunning else {
-            throw HeptapodChatterboxTTSError.processFailed(status: process.terminationStatus, output: try stderrText())
+            throw try processFailure()
         }
 
         var data = try encoder.encode(request)
@@ -346,7 +350,7 @@ private final class ChatterboxWorker {
         input.write(data)
 
         guard let line = try lineReader.readLine() else {
-            throw HeptapodChatterboxTTSError.processFailed(status: process.terminationStatus, output: try stderrText())
+            throw try processFailure()
         }
 
         let response = try decoder.decode(ChatterboxWorkerResponse.self, from: Data(line.utf8))
@@ -359,6 +363,14 @@ private final class ChatterboxWorker {
     func stderrText() throws -> String {
         try stderr.synchronize()
         return (try? String(contentsOf: stderrURL, encoding: .utf8)) ?? ""
+    }
+
+    private func processFailure() throws -> HeptapodChatterboxTTSError {
+        if process.isRunning {
+            process.terminate()
+        }
+        process.waitUntilExit()
+        return .processFailed(status: process.terminationStatus, output: try stderrText())
     }
 }
 
