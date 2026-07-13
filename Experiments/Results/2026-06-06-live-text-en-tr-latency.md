@@ -361,3 +361,35 @@ Tools/run_live_benchmark.py \
   --skip-build \
   --output-dir /tmp/heptapod-system-runner-smoke-v6
 ```
+
+## 2026-07-13 Browser System-Audio Verification
+
+The benchmark runner now starts playback only after the demo has synchronously
+written its ScreenCaptureKit-ready message. An isolated Chrome app window plays
+the fixture, which exercises the same browser system-audio path as YouTube.
+
+| Mode | Runner report | Segments | Audio RMS | Audio Peak | Transcripts | Translations | ASR avg | MT avg |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| raw 1s chunks | `/private/tmp/heptapod-browser-runner-raw-v1/report.md` | 16 | 0.1296 | 0.7791 | 13 | 5 | 0.091s | 0.610s |
+| sliding stable prefix | `/private/tmp/heptapod-browser-runner-stable-v8/report.md` | 16 | 0.1497 | 0.8201 | 6 | 2 | 0.134s | 1.156s |
+
+The stable-prefix run completed with no repeated translation segment. The
+stabilizer now retains text when the audio window slides, falls back after a
+bounded number of unstable hypotheses, merges corrected tails at stream end,
+and does not flush pending text while speech is still buffered. Remaining
+errors such as `live` becoming `lip` are compact Qwen ASR quality errors rather
+than silent capture or downstream text loss.
+
+```bash
+Tools/run_live_benchmark.py \
+  --system-audio \
+  --playback-audio /tmp/heptapod-local-fixture.wav \
+  --playback-browser chrome \
+  --playback-delay 1 \
+  --duration 16 \
+  --case browser-stable:compact:1.0:3 \
+  --asr-stabilization \
+  --examples 8 \
+  --last-examples 8 \
+  --repeated-segments 5
+```

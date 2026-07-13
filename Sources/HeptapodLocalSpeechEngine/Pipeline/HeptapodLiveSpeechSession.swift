@@ -290,6 +290,9 @@ public actor HeptapodLiveSpeechSession {
                         }
 
                         guard let transcript else {
+                            if isSpeechBuffered {
+                                continue
+                            }
                             if endpointing.flushOnSilence, pending.hasText {
                                 let didFlush = await flushPending(
                                     &pending,
@@ -300,8 +303,6 @@ public actor HeptapodLiveSpeechSession {
                                 if didFlush == false {
                                     continuation.yield(.silenceSkipped(index: index))
                                 }
-                            } else if isSpeechBuffered {
-                                continue
                             } else {
                                 continuation.yield(.silenceSkipped(index: index))
                             }
@@ -849,6 +850,8 @@ private struct SlidingASRStabilizer {
     private var chunks: [HeptapodAudioChunk] = []
     private var lastHypothesis: HeptapodTranscriptSegment?
     private var committedWords: [String] = []
+    private var fallbackHypothesis: HeptapodTranscriptSegment?
+    private var hypothesesWithoutCommit = 0
 
     init(configuration: HeptapodASRStabilizationConfiguration) {
         self.configuration = configuration
@@ -867,22 +870,27 @@ private struct SlidingASRStabilizer {
             lastHypothesis = hypothesis
         }
 
+        hypothesesWithoutCommit += 1
+        retainFallbackHypothesis(hypothesis)
+
         guard let lastHypothesis else {
-            return nil
+            return commitFallbackIfNeeded()
         }
 
         let stableWords = Self.commonPrefixWords(
             Self.words(in: lastHypothesis.text),
             Self.words(in: hypothesis.text)
         )
-        guard stableWords.count >= configuration.minimumStableWords else {
-            return nil
+        if stableWords.count >= configuration.minimumStableWords,
+           let transcript = commitDelta(
+               stableWords,
+               languageCode: hypothesis.languageCode ?? lastHypothesis.languageCode
+           ) {
+            didCommitHypothesis()
+            return transcript
         }
 
-        return commitDelta(
-            stableWords,
-            languageCode: hypothesis.languageCode ?? lastHypothesis.languageCode
-        )
+        return commitFallbackIfNeeded()
     }
 
     mutating func flushLatest(fallbackLanguageCode: String?) -> HeptapodTranscriptSegment? {
@@ -890,12 +898,46 @@ private struct SlidingASRStabilizer {
             reset()
         }
 
-        guard let lastHypothesis else {
+        if let fallbackHypothesis,
+           let lastHypothesis,
+           let mergedWords = Self.mergeHypotheses(
+               Self.words(in: fallbackHypothesis.text),
+               Self.words(in: lastHypothesis.text)
+           ) {
+            return commitDelta(
+                mergedWords,
+                languageCode: lastHypothesis.languageCode
+                    ?? fallbackHypothesis.languageCode
+                    ?? fallbackLanguageCode
+            )
+        }
+
+        var flushedParts: [String] = []
+        var languageCode = fallbackLanguageCode
+        if let fallbackHypothesis,
+           let transcript = commitDelta(
+               Self.words(in: fallbackHypothesis.text),
+               languageCode: fallbackHypothesis.languageCode ?? fallbackLanguageCode
+           ) {
+            flushedParts.append(transcript.text)
+            languageCode = transcript.languageCode ?? languageCode
+        }
+        if let lastHypothesis,
+           let transcript = commitDelta(
+               Self.words(in: lastHypothesis.text),
+               languageCode: lastHypothesis.languageCode ?? fallbackLanguageCode
+           ) {
+            flushedParts.append(transcript.text)
+            languageCode = transcript.languageCode ?? languageCode
+        }
+
+        guard flushedParts.isEmpty == false else {
             return nil
         }
-        return commitDelta(
-            Self.words(in: lastHypothesis.text),
-            languageCode: lastHypothesis.languageCode ?? fallbackLanguageCode
+        return HeptapodTranscriptSegment(
+            text: flushedParts.joined(separator: " "),
+            languageCode: languageCode,
+            isFinal: true
         )
     }
 
@@ -903,24 +945,92 @@ private struct SlidingASRStabilizer {
         chunks.removeAll()
         lastHypothesis = nil
         committedWords.removeAll()
+        fallbackHypothesis = nil
+        hypothesesWithoutCommit = 0
+    }
+
+    private mutating func retainFallbackHypothesis(_ hypothesis: HeptapodTranscriptSegment) {
+        guard let fallbackHypothesis else {
+            self.fallbackHypothesis = hypothesis
+            return
+        }
+        if Self.words(in: hypothesis.text).count > Self.words(in: fallbackHypothesis.text).count {
+            self.fallbackHypothesis = hypothesis
+        }
+    }
+
+    private mutating func commitFallbackIfNeeded() -> HeptapodTranscriptSegment? {
+        guard hypothesesWithoutCommit >= configuration.maximumWindowChunks else {
+            return nil
+        }
+        defer {
+            fallbackHypothesis = nil
+            hypothesesWithoutCommit = 0
+        }
+        guard let fallbackHypothesis else {
+            return nil
+        }
+        return commitDelta(
+            Self.words(in: fallbackHypothesis.text),
+            languageCode: fallbackHypothesis.languageCode
+        )
+    }
+
+    private mutating func didCommitHypothesis() {
+        fallbackHypothesis = nil
+        hypothesesWithoutCommit = 0
     }
 
     private mutating func commitDelta(_ candidateWords: [String], languageCode: String?) -> HeptapodTranscriptSegment? {
-        guard candidateWords.count > committedWords.count else {
+        guard candidateWords.isEmpty == false else {
             return nil
         }
 
-        let committedPrefix = Array(candidateWords.prefix(committedWords.count))
-        if committedPrefix != committedWords {
-            committedWords.removeAll()
+        if let deltaWords = Self.deltaAfterContainedCommittedWords(
+            committedWords,
+            in: candidateWords
+        ) {
+            committedWords = candidateWords
+            guard deltaWords.isEmpty == false else {
+                return nil
+            }
+            return HeptapodTranscriptSegment(
+                text: deltaWords.joined(separator: " "),
+                languageCode: languageCode,
+                isFinal: true
+            )
         }
 
-        let deltaWords = Array(candidateWords.dropFirst(committedWords.count))
+        if let overlap = Self.containedCandidatePrefixOverlap(
+            candidateWords,
+            in: committedWords
+        ) {
+            let deltaWords = Array(candidateWords.dropFirst(overlap.count))
+            committedWords = candidateWords
+            guard deltaWords.isEmpty == false else {
+                return nil
+            }
+            return HeptapodTranscriptSegment(
+                text: deltaWords.joined(separator: " "),
+                languageCode: languageCode,
+                isFinal: true
+            )
+        }
+
+        if Self.isPrefix(candidateWords, of: committedWords) {
+            return nil
+        }
+
+        let overlapCount = max(
+            Self.longestSuffixPrefixOverlap(committedWords, candidateWords),
+            Self.longestApproximateSuffixPrefixOverlap(committedWords, candidateWords)
+        )
+        let deltaWords = Array(candidateWords.dropFirst(overlapCount))
+        committedWords = candidateWords
         guard deltaWords.isEmpty == false else {
             return nil
         }
 
-        committedWords = candidateWords
         return HeptapodTranscriptSegment(
             text: deltaWords.joined(separator: " "),
             languageCode: languageCode,
@@ -935,12 +1045,137 @@ private struct SlidingASRStabilizer {
     private static func commonPrefixWords(_ lhs: [String], _ rhs: [String]) -> [String] {
         var result: [String] = []
         for (left, right) in zip(lhs, rhs) {
-            guard left == right else {
+            guard wordsMatch(left, right) else {
                 break
             }
-            result.append(left)
+            result.append(right)
         }
         return result
+    }
+
+    private static func isPrefix(_ prefix: [String], of words: [String]) -> Bool {
+        guard prefix.count <= words.count else {
+            return false
+        }
+        return zip(prefix, words).allSatisfy { wordsMatch($0.0, $0.1) }
+    }
+
+    private static func deltaAfterContainedCommittedWords(
+        _ committed: [String],
+        in candidate: [String]
+    ) -> [String]? {
+        guard committed.isEmpty == false, candidate.count >= committed.count else {
+            return nil
+        }
+
+        let maximumLeadingCorrection = min(2, candidate.count - committed.count)
+        for startIndex in 0...maximumLeadingCorrection {
+            let endIndex = startIndex + committed.count
+            let candidateSlice = candidate[startIndex..<endIndex]
+            if zip(committed, candidateSlice).allSatisfy({ wordsMatch($0.0, $0.1) }) {
+                return Array(candidate.dropFirst(endIndex))
+            }
+        }
+        return nil
+    }
+
+    private static func longestSuffixPrefixOverlap(_ lhs: [String], _ rhs: [String]) -> Int {
+        let maximumCount = min(lhs.count, rhs.count)
+        guard maximumCount > 0 else {
+            return 0
+        }
+
+        for count in stride(from: maximumCount, through: 1, by: -1) {
+            let suffix = lhs.suffix(count)
+            let prefix = rhs.prefix(count)
+            if zip(suffix, prefix).allSatisfy({ wordsMatch($0.0, $0.1) }) {
+                return count
+            }
+        }
+        return 0
+    }
+
+    private static func mergeHypotheses(_ earlier: [String], _ latest: [String]) -> [String]? {
+        if isPrefix(earlier, of: latest) {
+            return latest
+        }
+        if isPrefix(latest, of: earlier) {
+            return earlier
+        }
+        if let overlap = containedCandidatePrefixOverlap(latest, in: earlier) {
+            return Array(earlier.prefix(overlap.startIndex)) + latest
+        }
+
+        let overlapCount = max(
+            longestSuffixPrefixOverlap(earlier, latest),
+            longestApproximateSuffixPrefixOverlap(earlier, latest)
+        )
+        guard overlapCount > 0 else {
+            return nil
+        }
+        return Array(earlier.dropLast(overlapCount)) + latest
+    }
+
+    private static func containedCandidatePrefixOverlap(
+        _ candidate: [String],
+        in committed: [String]
+    ) -> (startIndex: Int, count: Int)? {
+        let maximumCount = min(candidate.count, committed.count)
+        guard maximumCount >= 3 else {
+            return nil
+        }
+
+        for count in stride(from: maximumCount, through: 3, by: -1) {
+            let candidatePrefix = candidate.prefix(count)
+            let latestStartIndex = committed.count - count
+            for startIndex in 0...latestStartIndex {
+                let endIndex = startIndex + count
+                guard committed.count - endIndex <= 2 else {
+                    continue
+                }
+                let committedSlice = committed[startIndex..<endIndex]
+                if zip(candidatePrefix, committedSlice).allSatisfy({ wordsMatch($0.0, $0.1) }) {
+                    return (startIndex, count)
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func longestApproximateSuffixPrefixOverlap(_ lhs: [String], _ rhs: [String]) -> Int {
+        let maximumCount = min(lhs.count, rhs.count)
+        guard maximumCount >= 4 else {
+            return 0
+        }
+
+        for count in stride(from: maximumCount, through: 4, by: -1) {
+            let suffix = lhs.suffix(count)
+            let prefix = rhs.prefix(count)
+            guard let suffixLast = suffix.last,
+                  let prefixLast = prefix.last,
+                  wordsMatch(suffixLast, prefixLast) else {
+                continue
+            }
+
+            let matchCount = zip(suffix, prefix).reduce(into: 0) { matches, pair in
+                if wordsMatch(pair.0, pair.1) {
+                    matches += 1
+                }
+            }
+            let requiredMatches = max(3, (count * 2 + 2) / 3)
+            if matchCount >= requiredMatches, count - matchCount <= 2 {
+                return count
+            }
+        }
+        return 0
+    }
+
+    private static func wordsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        normalizedWord(lhs) == normalizedWord(rhs)
+    }
+
+    private static func normalizedWord(_ word: String) -> String {
+        word.trimmingCharacters(in: .punctuationCharacters).lowercased()
     }
 
     private static func combine(_ chunks: [HeptapodAudioChunk]) -> HeptapodAudioChunk {

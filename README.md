@@ -190,7 +190,7 @@ swift run HeptapodLiveSpeechDemo -- \
 ```
 
 `--latency low` is the default for live demos. It favors earlier translation
-with 0.75 second capture chunks, one-word stable-prefix ASR commits, and a
+with 0.75 second capture chunks, two-word stable-prefix ASR commits, and a
 single buffered ASR segment before flushing to translation/TTS. This is
 intentionally more aggressive and may sound more phrase-by-phrase. Use
 `--latency balanced` or `--latency quality` when translation quality matters
@@ -220,8 +220,10 @@ Repeatable system-audio smoke test:
 Tools/run_live_benchmark.py \
   --system-audio \
   --playback-audio /tmp/heptapod-local-fixture.wav \
-  --duration 10 \
-  --case system-smoke:compact:1.0:3 \
+  --playback-browser chrome \
+  --playback-delay 1 \
+  --duration 16 \
+  --case browser-smoke:compact:1.0:3 \
   --asr-stabilization \
   --examples 3 \
   --last-examples 3 \
@@ -229,9 +231,12 @@ Tools/run_live_benchmark.py \
 ```
 
 This uses the same ScreenCaptureKit path as YouTube/browser audio, but plays a
-known local fixture through `afplay` so latency and transcript regressions can be
-reproduced. Playback-audio runs require at least one `translation_ready` event
-by default, so silent capture is reported as a failed case.
+known local fixture in an isolated Chrome app window so latency and transcript
+regressions can be reproduced. Direct `afplay` output was silent in the tested
+ScreenCaptureKit configuration, so browser playback is required for the
+repeatable browser-audio smoke. Playback-audio runs require at least one
+`translation_ready` event by default, so silent capture is reported as a failed
+case.
 
 More natural Chatterbox TTS output:
 

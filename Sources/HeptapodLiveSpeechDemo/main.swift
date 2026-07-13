@@ -284,11 +284,12 @@ struct HeptapodLiveSpeechDemo {
         outputMode: HeptapodLiveOutputMode
     ) async throws {
         #if os(macOS)
-        print("""
+        let captureMessage = """
         Capturing macOS system audio. Start YouTube/browser playback now.
         Stop with Ctrl+C\(durationSeconds.map { " or wait \($0)s" } ?? "").
 
-        """)
+        """
+        FileHandle.standardOutput.write(Data(captureMessage.utf8))
         let source = HeptapodScreenCaptureSystemAudioSource(
             chunkDurationSeconds: chunkDurationSeconds,
             maximumDurationSeconds: durationSeconds
@@ -845,13 +846,13 @@ private enum DemoLatencyPreset: String {
             HeptapodASRStabilizationConfiguration(
                 isEnabled: true,
                 maximumWindowChunks: 3,
-                minimumStableWords: 1
+                minimumStableWords: 2
             )
         case .balanced:
             HeptapodASRStabilizationConfiguration(
                 isEnabled: true,
                 maximumWindowChunks: 4,
-                minimumStableWords: 2
+                minimumStableWords: 3
             )
         case .quality:
             .disabled

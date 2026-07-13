@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Heptapod System Audio Playback</title>
+<body>
+<audio id="player" controls autoplay></audio>
+<script>
+const player = document.getElementById("player");
+const audioURL = new URLSearchParams(window.location.search).get("audio");
+
+if (!audioURL) {
+  document.title = "Heptapod playback: missing audio URL";
+} else {
+  player.src = audioURL;
+  player.play().catch((error) => {
+    document.title = `Heptapod playback failed: ${error.name}`;
+  });
+}
+</script>
+</body>
+</html>

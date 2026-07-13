@@ -908,6 +908,336 @@ func sentenceBufferedLiveSessionUsesStableASRPrefixDeltas() async throws {
 }
 
 @Test
+func sentenceBufferedLiveSessionRetainsTextWhenASRWindowSlides() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: SequenceRecognizer([
+            "Today we are testing",
+            "Today we are testing local live translation",
+            "local live translation the audio should",
+            "local live translation the audio should be translated"
+        ]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data([1]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([2]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([3]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([4]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        asrStabilization: HeptapodASRStabilizationConfiguration(
+            isEnabled: true,
+            maximumWindowChunks: 2,
+            minimumStableWords: 2
+        )
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == [
+        "Today we are testing local live translation the audio should be translated"
+    ])
+}
+
+@Test
+func sentenceBufferedLiveSessionFallsBackWhenSlidingHypothesesHaveNoCommonPrefix() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: SequenceRecognizer([
+            "Today we are testing local",
+            "we are testing local live",
+            "testing local live translation",
+            "local live translation works"
+        ]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data([1]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([2]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([3]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([4]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        asrStabilization: HeptapodASRStabilizationConfiguration(
+            isEnabled: true,
+            maximumWindowChunks: 3,
+            minimumStableWords: 2
+        )
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == ["Today we are testing local live translation works"])
+}
+
+@Test
+func sentenceBufferedLiveSessionDoesNotRepeatLeadingASRCorrections() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: SequenceRecognizer([
+            "sample helps compare latency",
+            "sample helps compare latency",
+            "Court sample helps compare latency",
+            "Court sample helps compare latency"
+        ]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data([1]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([2]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([3]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([4]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        asrStabilization: HeptapodASRStabilizationConfiguration(
+            isEnabled: true,
+            maximumWindowChunks: 2,
+            minimumStableWords: 2
+        )
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == ["sample helps compare latency"])
+}
+
+@Test
+func sentenceBufferedLiveSessionWaitsPastShortUnstablePrefix() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: SequenceRecognizer([
+            "You might",
+            "You might",
+            "Today we are testing",
+            "Today we are testing local translation"
+        ]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data([1]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([2]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([3]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([4]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        asrStabilization: HeptapodASRStabilizationConfiguration(
+            isEnabled: true,
+            maximumWindowChunks: 4,
+            minimumStableWords: 3
+        )
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == ["Today we are testing local translation"])
+}
+
+@Test
+func sentenceBufferedLiveSessionDoesNotRepeatApproximateASRCorrections() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: SequenceRecognizer([
+            "This short example helps compare latency",
+            "This short example helps compare latency",
+            "A short sample helps compare latency without opening YouTube",
+            "A short sample helps compare latency without opening YouTube"
+        ]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data([1]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([2]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([3]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([4]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        asrStabilization: HeptapodASRStabilizationConfiguration(
+            isEnabled: true,
+            maximumWindowChunks: 2,
+            minimumStableWords: 2
+        )
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == [
+        "This short example helps compare latency without opening YouTube"
+    ])
+}
+
+@Test
+func sentenceBufferedLiveSessionMergesCorrectedSlidingTailAtStreamEnd() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: SequenceRecognizer([
+            "This short sample helps compare latency without opening you to",
+            "This short sample helps compare latency without opening you to",
+            "short sample helps compare latency without opening YouTube",
+            "short sample helps compare latency without opening YouTube"
+        ]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data([1]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([2]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([3]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([4]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        asrStabilization: HeptapodASRStabilizationConfiguration(
+            isEnabled: true,
+            maximumWindowChunks: 5,
+            minimumStableWords: 20
+        )
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == [
+        "This short sample helps compare latency without opening YouTube"
+    ])
+}
+
+@Test
 func wavFilePlaybackSinkWritesSequentialFiles() async throws {
     let outputDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("heptapod-wav-sink-\(UUID().uuidString)")

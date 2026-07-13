@@ -9,8 +9,10 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+from urllib.parse import urlencode
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +25,8 @@ TRACE_SUMMARY = REPO_ROOT / "Tools" / "trace_summary.py"
 COMMAND_LINE_TOOLS = Path("/Library/Developer/CommandLineTools")
 COMMAND_LINE_TOOLS_SDKS = COMMAND_LINE_TOOLS / "SDKs"
 MLX_METALLIB_SCRIPT = REPO_ROOT / ".build" / "checkouts" / "speech-swift" / "scripts" / "build_mlx_metallib.sh"
+BROWSER_PLAYBACK_PAGE = REPO_ROOT / "Tools" / "system_audio_browser_playback.html"
+GOOGLE_CHROME_BINARY = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 
 @dataclass(frozen=True)
@@ -108,12 +112,21 @@ def run_command(
     env: dict[str, str] | None = None,
     playback_audio_path: Path | None = None,
     playback_delay_seconds: float = 0.0,
+    playback_browser: str | None = None,
+    playback_browser_profile_dir: Path | None = None,
 ) -> int:
     printable = printable_command(command, env=env)
     if dry_run:
         if playback_audio_path is not None:
             print("# playback starts after the demo reports that system-audio capture began")
-            print(printable_playback_command(playback_audio_path, playback_delay_seconds))
+            print(
+                printable_playback_command(
+                    playback_audio_path,
+                    playback_delay_seconds,
+                    browser=playback_browser,
+                    browser_profile_dir=playback_browser_profile_dir,
+                )
+            )
         print(printable)
         return 0
 
@@ -126,6 +139,8 @@ def run_command(
             env=env,
             playback_audio_path=playback_audio_path,
             playback_delay_seconds=playback_delay_seconds,
+            playback_browser=playback_browser,
+            playback_browser_profile_dir=playback_browser_profile_dir,
         )
 
     if log_path is None:
@@ -155,10 +170,17 @@ def run_logged_command_with_capture_playback(
     env: dict[str, str] | None,
     playback_audio_path: Path,
     playback_delay_seconds: float,
+    playback_browser: str | None,
+    playback_browser_profile_dir: Path | None,
 ) -> int:
     printable = printable_command(command, env=env)
-    playback_command = printable_playback_command(playback_audio_path, playback_delay_seconds)
-    playback_process: subprocess.Popen[bytes] | None = None
+    playback_command = printable_playback_command(
+        playback_audio_path,
+        playback_delay_seconds,
+        browser=playback_browser,
+        browser_profile_dir=playback_browser_profile_dir,
+    )
+    playback_process: subprocess.Popen[str] | None = None
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as handle:
@@ -188,19 +210,32 @@ def run_logged_command_with_capture_playback(
                         playback_delay_seconds,
                         stdout=handle,
                         stderr=subprocess.STDOUT,
+                        browser=playback_browser,
+                        browser_profile_dir=playback_browser_profile_dir,
                     )
             return_code = process.wait()
         finally:
-            stop_playback(playback_process)
+            stop_playback(playback_process, uses_browser=playback_browser is not None)
 
         handle.write(f"\nexit_code={return_code}\n")
         return return_code
 
 
-def printable_playback_command(audio_path: Path, delay_seconds: float) -> str:
-    return "( sleep {delay}; afplay {audio} ) &".format(
+def printable_playback_command(
+    audio_path: Path,
+    delay_seconds: float,
+    *,
+    browser: str | None = None,
+    browser_profile_dir: Path | None = None,
+) -> str:
+    target = playback_target_command(
+        audio_path,
+        browser=browser,
+        browser_profile_dir=browser_profile_dir,
+    )
+    return "( sleep {delay}; {target} ) &".format(
         delay=format_number(delay_seconds),
-        audio=shlex.quote(str(audio_path)),
+        target=shlex.join(target),
     )
 
 
@@ -210,32 +245,78 @@ def start_delayed_playback(
     *,
     stdout,
     stderr,
-) -> subprocess.Popen[bytes] | None:
+    browser: str | None = None,
+    browser_profile_dir: Path | None = None,
+) -> subprocess.Popen[str] | None:
     if audio_path is None:
         return None
+    target = playback_target_command(
+        audio_path,
+        browser=browser,
+        browser_profile_dir=browser_profile_dir,
+    )
     return subprocess.Popen(
         [
             "/bin/sh",
             "-c",
-            "sleep \"$1\"; exec afplay \"$2\"",
-            "heptapod-afplay",
+            "sleep \"$1\"; shift; exec \"$@\"",
+            "heptapod-playback",
             format_number(delay_seconds),
-            str(audio_path),
+            *target,
         ],
         cwd=REPO_ROOT,
         stdout=stdout,
         stderr=stderr,
+        text=True,
+        start_new_session=browser is not None,
     )
 
 
-def stop_playback(process: subprocess.Popen[bytes] | None) -> None:
+def playback_target_command(
+    audio_path: Path,
+    *,
+    browser: str | None,
+    browser_profile_dir: Path | None,
+) -> list[str]:
+    if browser is None:
+        return ["afplay", str(audio_path)]
+    if browser != "chrome":
+        raise ValueError(f"unsupported playback browser: {browser}")
+    if browser_profile_dir is None:
+        raise ValueError("browser playback requires a profile directory")
+
+    browser_url = BROWSER_PLAYBACK_PAGE.as_uri() + "?" + urlencode({"audio": audio_path.as_uri()})
+    return [
+        str(GOOGLE_CHROME_BINARY),
+        f"--user-data-dir={browser_profile_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--autoplay-policy=no-user-gesture-required",
+        "--allow-file-access-from-files",
+        f"--app={browser_url}",
+    ]
+
+
+def stop_playback(process: subprocess.Popen[str] | None, *, uses_browser: bool) -> None:
     if process is None or process.poll() is not None:
         return
-    process.terminate()
+    if uses_browser:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+    else:
+        process.terminate()
     try:
         process.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        process.kill()
+        if uses_browser:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                return
+        else:
+            process.kill()
         process.wait(timeout=3)
 
 
@@ -370,6 +451,8 @@ def make_report(
     uses_system_audio: bool,
     playback_audio_path: Path | None,
     playback_delay_seconds: float,
+    playback_browser: str | None,
+    playback_browser_profile_dir: Path | None,
     target_language: str,
     duration_seconds: float,
     cases: list[BenchmarkCase],
@@ -428,6 +511,8 @@ def make_report(
                 f"Playback delay: `{format_number(playback_delay_seconds)}s`",
             ]
         )
+        if playback_browser is not None:
+            lines.append(f"Playback browser: `{playback_browser}`")
     if minimum_translations > 0:
         lines.append(f"Minimum translations: `{minimum_translations}`")
     lines.extend(
@@ -479,7 +564,12 @@ def make_report(
                 f"### {result.case.label}",
                 "",
                 "```bash",
-                *playback_command_lines(playback_audio_path, playback_delay_seconds),
+                *playback_command_lines(
+                    playback_audio_path,
+                    playback_delay_seconds,
+                    browser=playback_browser,
+                    browser_profile_dir=playback_browser_profile_dir,
+                ),
                 " ".join(
                     benchmark_command(
                         result.case,
@@ -506,12 +596,23 @@ def source_description(audio_path: Path | None, uses_system_audio: bool) -> str:
     return str(audio_path) if audio_path is not None else "audio file"
 
 
-def playback_command_lines(audio_path: Path | None, delay_seconds: float) -> list[str]:
+def playback_command_lines(
+    audio_path: Path | None,
+    delay_seconds: float,
+    *,
+    browser: str | None,
+    browser_profile_dir: Path | None,
+) -> list[str]:
     if audio_path is None:
         return []
     return [
         "# playback starts after the demo reports that system-audio capture began",
-        printable_playback_command(audio_path, delay_seconds),
+        printable_playback_command(
+            audio_path,
+            delay_seconds,
+            browser=browser,
+            browser_profile_dir=browser_profile_dir,
+        ),
     ]
 
 
@@ -586,7 +687,12 @@ def main() -> int:
     parser.add_argument(
         "--playback-audio",
         type=Path,
-        help="Optional local audio file to play with afplay during --system-audio benchmarks.",
+        help="Optional local audio file to play during --system-audio benchmarks.",
+    )
+    parser.add_argument(
+        "--playback-browser",
+        choices=["chrome"],
+        help="Play --playback-audio from a visible browser instead of afplay.",
     )
     parser.add_argument(
         "--playback-delay",
@@ -653,6 +759,7 @@ def main() -> int:
     audio_path = args.audio.expanduser().resolve() if args.audio else None
     playback_audio_path = args.playback_audio.expanduser().resolve() if args.playback_audio else None
     output_dir = args.output_dir.expanduser().resolve()
+    playback_browser_profile_dir = output_dir / "playback-browser-profile" if args.playback_browser else None
     cases = args.cases or default_cases(args.preset)
 
     if args.duration <= 0:
@@ -669,6 +776,8 @@ def main() -> int:
         parser.error("--audio is required unless --system-audio is used")
     elif playback_audio_path is not None:
         parser.error("--playback-audio requires --system-audio")
+    if args.playback_browser and playback_audio_path is None:
+        parser.error("--playback-browser requires --playback-audio")
 
     minimum_translations = (
         args.min_translations
@@ -680,7 +789,11 @@ def main() -> int:
         parser.error(f"audio file does not exist: {audio_path}")
     if not args.dry_run and playback_audio_path is not None and not playback_audio_path.exists():
         parser.error(f"playback audio file does not exist: {playback_audio_path}")
-    if not args.dry_run and playback_audio_path is not None and shutil.which("afplay") is None:
+    if not args.dry_run and args.playback_browser == "chrome" and not GOOGLE_CHROME_BINARY.exists():
+        parser.error(f"Google Chrome is required for --playback-browser chrome: {GOOGLE_CHROME_BINARY}")
+    if not args.dry_run and args.playback_browser == "chrome" and not BROWSER_PLAYBACK_PAGE.exists():
+        parser.error(f"browser playback page is missing: {BROWSER_PLAYBACK_PAGE}")
+    if not args.dry_run and playback_audio_path is not None and args.playback_browser is None and shutil.which("afplay") is None:
         parser.error("afplay is required for --playback-audio")
 
     if not args.skip_build:
@@ -716,6 +829,8 @@ def main() -> int:
             env=model_runtime_environment(),
             playback_audio_path=playback_audio_path,
             playback_delay_seconds=args.playback_delay,
+            playback_browser=args.playback_browser,
+            playback_browser_profile_dir=playback_browser_profile_dir,
         )
         if not args.dry_run and status == 0:
             status = validate_trace_expectations(
@@ -737,6 +852,8 @@ def main() -> int:
         uses_system_audio=args.system_audio,
         playback_audio_path=playback_audio_path,
         playback_delay_seconds=args.playback_delay,
+        playback_browser=args.playback_browser,
+        playback_browser_profile_dir=playback_browser_profile_dir,
         target_language=args.to,
         duration_seconds=args.duration,
         cases=cases,
