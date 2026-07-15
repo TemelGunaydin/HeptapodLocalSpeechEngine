@@ -34,6 +34,8 @@ public struct HeptapodModelCatalog: Sendable {
         .nllbDistilledTranslator,
         .seamlessTextTranslator,
         .qwenTTSCompact,
+        .mossTTSNano,
+        .chatterboxMLXTTS,
         .chatterboxTTS,
         .macOSSystemTTS,
         .kokoroTTS,
@@ -333,6 +335,34 @@ public extension HeptapodModelDescriptor {
         tradeoffs: "Bigger than Kokoro and may compete with ASR/translation for GPU memory."
     )
 
+    static let mossTTSNano = HeptapodModelDescriptor(
+        id: "tts.moss_tts_nano.100m.onnx",
+        stage: .speechSynthesis,
+        displayName: "MOSS-TTS-Nano 100M",
+        provider: "OpenMOSS",
+        family: "MOSS-TTS-Nano",
+        backend: .onnxRuntime,
+        capabilities: [.batchTTS, .streamingTTS, .voiceCloning],
+        qualityTier: .balanced,
+        latencyTier: .realtime,
+        status: .adapterRequired,
+        footprint: HeptapodModelFootprint(
+            downloadSize: .megabytes(728),
+            installedSize: .gigabytes(1.5),
+            recommendedMemory: .gigabytes(2)
+        ),
+        languageCoverage: HeptapodLanguageCoverage(
+            targetLanguageCodes: [
+                "ar", "cs", "da", "de", "el", "en", "es", "fa", "fr", "hu",
+                "it", "ja", "ko", "pl", "pt", "ru", "sv", "tr", "zh"
+            ],
+            notes: "Streaming multilingual speech synthesis, including Turkish, through the official ONNX runtime."
+        ),
+        summary: "Low-latency local TTS that begins playback while the remaining waveform is still being decoded.",
+        tradeoffs: "Faster than the quality backend, but less expressive than larger Chatterbox voices. The current bridge runs ONNX inference on CPU to leave Metal available for ASR and translation.",
+        licenseNote: "OpenMOSS repository is Apache-2.0; verify downloaded model-weight and reference-voice terms before distribution."
+    )
+
     static let chatterboxTTS = HeptapodModelDescriptor(
         id: "tts.chatterbox.python",
         stage: .speechSynthesis,
@@ -353,6 +383,34 @@ public extension HeptapodModelDescriptor {
         summary: "More human-sounding TTS path for local live translation.",
         tradeoffs: "Requires a local Python environment with chatterbox-tts installed; first synthesis may be slower than Kokoro.",
         licenseNote: "Chatterbox source is MIT; verify selected model weights and voice prompt rights before distribution."
+    )
+
+    static let chatterboxMLXTTS = HeptapodModelDescriptor(
+        id: "tts.chatterbox.mlx.fp16",
+        stage: .speechSynthesis,
+        displayName: "Chatterbox MLX FP16",
+        provider: "Resemble AI / MLX Community",
+        family: "Chatterbox Multilingual",
+        backend: .custom,
+        capabilities: [.batchTTS, .voiceCloning],
+        qualityTier: .highQuality,
+        latencyTier: .nearRealtime,
+        status: .adapterRequired,
+        footprint: HeptapodModelFootprint(
+            downloadSize: .gigabytes(2.9),
+            installedSize: .gigabytes(3.5),
+            recommendedMemory: .gigabytes(8)
+        ),
+        languageCoverage: HeptapodLanguageCoverage(
+            targetLanguageCodes: [
+                "ar", "cs", "de", "en", "es", "fr", "hu", "it", "ja",
+                "ko", "nl", "pl", "pt", "ru", "tr", "zh"
+            ],
+            notes: "Expressive multilingual speech synthesis on Apple Silicon, including Turkish."
+        ),
+        summary: "Higher-quality local speech output that runs faster than playback on the tested M3 Max.",
+        tradeoffs: "Produces a complete segment before playback instead of true audio deltas. It uses Metal and can contend with MLX ASR and translation under load.",
+        licenseNote: "mlx-audio is MIT; verify the original Chatterbox model license and reference-voice rights before distribution."
     )
 
     static let macOSSystemTTS = HeptapodModelDescriptor(

@@ -105,7 +105,14 @@ struct HeptapodLiveSpeechDemo {
                 chatterboxScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
                 chatterboxVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:)),
                 chatterboxDevice: options.ttsDevice,
-                chatterboxUsesPersistentWorker: options.usesChatterboxPersistentWorker
+                chatterboxUsesPersistentWorker: options.usesChatterboxPersistentWorker,
+                chatterboxMLXPythonExecutable: options.ttsPythonExecutable,
+                chatterboxMLXScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
+                chatterboxMLXVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:)),
+                chatterboxMLXUsesPersistentWorker: options.usesChatterboxPersistentWorker,
+                mossPythonExecutable: options.ttsPythonExecutable,
+                mossScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
+                mossVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:))
             )
         }
 
@@ -148,7 +155,7 @@ struct HeptapodLiveSpeechDemo {
           xcrun swift run HeptapodLiveSpeechDemo -- --real --audio /path/to/input.wav --to es --output-dir /tmp/heptapod-live
           xcrun swift run HeptapodLiveSpeechDemo -- --real --microphone --to es --duration 10 --play-output
           Tools/run_live_translation.sh
-          Tools/run_live_translation.sh --tts chatterbox --tts-device mps
+          Tools/run_live_translation.sh --tts chatterbox-mlx
 
         Options:
           --interactive       Type preview text segments on stdin.
@@ -171,11 +178,12 @@ struct HeptapodLiveSpeechDemo {
                               Force sliding-window stable-prefix ASR buffering.
           --no-asr-stabilization
                               Disable sliding-window stable-prefix ASR buffering.
-          --tts <name>        Real mode TTS backend: apple, kokoro, or chatterbox.
-                              Default: apple for Turkish on macOS; kokoro otherwise.
-          --tts-script <path> Chatterbox bridge script. Default: Tools/chatterbox_tts.py.
-          --tts-python <name> Python executable for Chatterbox. Default: python3.
-          --tts-device <name> Chatterbox torch device: auto, cpu, mps, or cuda.
+          --tts <name>        Real mode TTS: moss, chatterbox-mlx, apple, kokoro, or chatterbox.
+                              Default: moss for Turkish; kokoro otherwise.
+          --tts-script <path> Python TTS bridge script override.
+          --tts-python <name> Python executable for the selected Python TTS backend.
+                              Uses the matching local venv for MOSS and Chatterbox MLX.
+          --tts-device <name> Legacy PyTorch Chatterbox device: auto, cpu, mps, or cuda.
           --tts-voice-prompt <path>
                               Optional reference WAV for Chatterbox voice cloning.
           --tts-one-shot      Run a new Chatterbox Python process for each segment.
@@ -356,7 +364,12 @@ struct HeptapodLiveSpeechDemo {
             sinks.append(fileSink)
         }
         if shouldPlayOutput {
-            sinks.append(HeptapodAVAudioPlaybackSink(playbackRate: 1.15))
+            sinks.append(
+                HeptapodAVAudioPlaybackSink(
+                    playbackRate: 1,
+                    maximumPlaybackRate: 1.15
+                )
+            )
         }
 
         if sinks.isEmpty {
@@ -477,6 +490,17 @@ struct HeptapodLiveSpeechDemo {
                     resultLatencySeconds: resultLatencySeconds,
                     outputLatencySeconds: outputLatencySeconds
                 )
+            case .synthesisAudioReady(let index):
+                let readyAt = Date()
+                let firstAudioLatencySeconds = transcriptTimes[index].map { readyAt.timeIntervalSince($0) }
+                if let firstAudioLatencySeconds {
+                    print("  TTS: first audio +\(String(format: "%.2f", firstAudioLatencySeconds))s after ASR")
+                }
+                try trace?.record(
+                    event: "tts_first_audio",
+                    index: index,
+                    firstAudioLatencySeconds: firstAudioLatencySeconds
+                )
             case .playbackStarted(let index):
                 let startedAt = Date()
                 playbackStartTimes[index] = startedAt
@@ -579,7 +603,7 @@ private struct DemoOptions {
         var targetLanguageCode: String?
         var ttsBackend: DemoTTSBackend?
         var ttsScriptPath: String?
-        var ttsPythonExecutable = "python3"
+        var ttsPythonExecutable: String?
         var ttsDevice: String?
         var ttsVoicePromptPath: String?
         var usesChatterboxPersistentWorker = true
@@ -701,11 +725,14 @@ private struct DemoOptions {
         self.usesASRStabilization = usesASRStabilization ?? (usesTextOnly ? false : latencyPreset.usesASRStabilization)
         self.asrPreset = asrPreset
         self.targetLanguageCode = targetLanguageCode
-        self.ttsBackend = ttsBackend ?? Self.defaultTTSBackend(
+        let resolvedTTSBackend = ttsBackend ?? Self.defaultTTSBackend(
             targetLanguageCode: targetLanguageCode ?? "tr"
         )
+        self.ttsBackend = resolvedTTSBackend
         self.ttsScriptPath = ttsScriptPath
-        self.ttsPythonExecutable = ttsPythonExecutable
+        self.ttsPythonExecutable = ttsPythonExecutable ?? Self.defaultTTSPythonExecutable(
+            for: resolvedTTSBackend
+        )
         self.ttsDevice = ttsDevice
         self.ttsVoicePromptPath = ttsVoicePromptPath
         self.usesChatterboxPersistentWorker = usesChatterboxPersistentWorker
@@ -731,12 +758,21 @@ private struct DemoOptions {
             .split(separator: "-", maxSplits: 1)
             .first
             .map(String.init) ?? targetLanguageCode
-        #if os(macOS)
         if baseLanguageCode == "tr" {
-            return .apple
+            return .moss
         }
-        #endif
         return .kokoro
+    }
+
+    private static func defaultTTSPythonExecutable(for backend: DemoTTSBackend) -> String {
+        switch backend {
+        case .moss:
+            ".venv-moss-tts-nano/bin/python"
+        case .chatterboxMLX:
+            ".venv-chatterbox-mlx/bin/python"
+        case .apple, .kokoro, .chatterbox:
+            "python3"
+        }
     }
 
     var sourceDescription: String {
@@ -787,6 +823,10 @@ private struct DemoOptions {
 
     var ttsDescriptor: HeptapodModelDescriptor {
         switch ttsBackend {
+        case .moss:
+            HeptapodModelDescriptor.mossTTSNano
+        case .chatterboxMLX:
+            HeptapodModelDescriptor.chatterboxMLXTTS
         case .apple:
             HeptapodModelDescriptor.macOSSystemTTS
         case .kokoro:
@@ -798,6 +838,8 @@ private struct DemoOptions {
 }
 
 private enum DemoTTSBackend: String {
+    case moss
+    case chatterboxMLX = "chatterbox-mlx"
     case apple
     case kokoro
     case chatterbox
@@ -936,6 +978,7 @@ private final class LiveTraceRecorder {
         audioPeak: Double? = nil,
         resultLatencySeconds: TimeInterval? = nil,
         outputLatencySeconds: TimeInterval? = nil,
+        firstAudioLatencySeconds: TimeInterval? = nil,
         playbackLatencySeconds: TimeInterval? = nil,
         playbackDurationSeconds: TimeInterval? = nil
     ) throws {
@@ -955,6 +998,7 @@ private final class LiveTraceRecorder {
             audioPeak: audioPeak,
             resultLatencySeconds: resultLatencySeconds,
             outputLatencySeconds: outputLatencySeconds,
+            firstAudioLatencySeconds: firstAudioLatencySeconds,
             playbackLatencySeconds: playbackLatencySeconds,
             playbackDurationSeconds: playbackDurationSeconds,
             command: CommandLine.arguments
@@ -980,12 +1024,16 @@ private struct LiveTraceEvent: Encodable {
     let audioPeak: Double?
     let resultLatencySeconds: TimeInterval?
     let outputLatencySeconds: TimeInterval?
+    let firstAudioLatencySeconds: TimeInterval?
     let playbackLatencySeconds: TimeInterval?
     let playbackDurationSeconds: TimeInterval?
     let command: [String]
 }
 
-private struct CompositePlaybackSink: HeptapodSpeechPlaybackSink {
+private struct CompositePlaybackSink:
+    HeptapodStreamingSpeechPlaybackSink,
+    HeptapodPlaybackBacklogAware
+{
     let sinks: [any HeptapodSpeechPlaybackSink]
 
     func play(_ speech: HeptapodSynthesizedSpeech) async throws {
@@ -993,9 +1041,98 @@ private struct CompositePlaybackSink: HeptapodSpeechPlaybackSink {
             try await sink.play(speech)
         }
     }
+
+    func play(
+        _ speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
+    ) async throws {
+        let relays = sinks.map { _ in CompositeSpeechStreamRelay() }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (sink, relay) in zip(sinks, relays) {
+                group.addTask {
+                    if let streamingSink = sink as? any HeptapodStreamingSpeechPlaybackSink {
+                        try await streamingSink.play(relay.stream)
+                    } else {
+                        try await sink.play(try await collectCompositeSpeech(from: relay.stream))
+                    }
+                }
+            }
+
+            do {
+                for try await speech in speechStream {
+                    for relay in relays {
+                        relay.yield(speech)
+                    }
+                }
+                for relay in relays {
+                    relay.finish()
+                }
+            } catch {
+                for relay in relays {
+                    relay.finish(throwing: error)
+                }
+                group.cancelAll()
+                throw error
+            }
+
+            try await group.waitForAll()
+        }
+    }
+
+    func setPlaybackBacklog(segmentCount: Int) async {
+        for sink in sinks {
+            if let backlogAwareSink = sink as? any HeptapodPlaybackBacklogAware {
+                await backlogAwareSink.setPlaybackBacklog(segmentCount: segmentCount)
+            }
+        }
+    }
+}
+
+private func collectCompositeSpeech(
+    from stream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
+) async throws -> HeptapodSynthesizedSpeech {
+    var pcm16 = Data()
+    var sampleRate: Int?
+    var languageCode: String?
+    for try await chunk in stream {
+        if let sampleRate, sampleRate != chunk.sampleRate {
+            throw DemoError.inconsistentStreamingSampleRate(sampleRate, chunk.sampleRate)
+        }
+        sampleRate = chunk.sampleRate
+        languageCode = chunk.languageCode
+        pcm16.append(chunk.pcm16)
+    }
+    guard let sampleRate, let languageCode, pcm16.isEmpty == false else {
+        throw DemoError.emptyStreamingSpeech
+    }
+    return HeptapodSynthesizedSpeech(
+        pcm16: pcm16,
+        sampleRate: sampleRate,
+        languageCode: languageCode
+    )
+}
+
+private final class CompositeSpeechStreamRelay: Sendable {
+    let stream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
+    private let continuation: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>.Continuation
+
+    init() {
+        let pair = AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>.makeStream()
+        stream = pair.stream
+        continuation = pair.continuation
+    }
+
+    func yield(_ speech: HeptapodSynthesizedSpeech) {
+        continuation.yield(speech)
+    }
+
+    func finish(throwing error: Error? = nil) {
+        continuation.finish(throwing: error)
+    }
 }
 
 private enum DemoError: LocalizedError {
+    case emptyStreamingSpeech
+    case inconsistentStreamingSampleRate(Int, Int)
     case invalidASRPreset(String)
     case invalidDuration(String)
     case invalidLatencyPreset(String)
@@ -1012,6 +1149,10 @@ private enum DemoError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .emptyStreamingSpeech:
+            "Synthesized speech stream contained no audio."
+        case .inconsistentStreamingSampleRate(let expected, let actual):
+            "Synthesized speech stream changed sample rate from \(expected) Hz to \(actual) Hz."
         case .invalidASRPreset(let value):
             "Invalid ASR preset: \(value). Use compact or quality."
         case .invalidDuration(let value):
@@ -1021,7 +1162,7 @@ private enum DemoError: LocalizedError {
         case .invalidPositiveOption(let option, let value):
             "Invalid value for \(option): \(value)."
         case .invalidTTSBackend(let value):
-            "Invalid TTS backend: \(value). Use apple, kokoro, or chatterbox."
+            "Invalid TTS backend: \(value). Use moss, chatterbox-mlx, apple, kokoro, or chatterbox."
         case .invalidTTSDevice(let value):
             "Invalid TTS device: \(value). Use auto, cpu, mps, or cuda."
         case .audioFileRequiresRealMode:

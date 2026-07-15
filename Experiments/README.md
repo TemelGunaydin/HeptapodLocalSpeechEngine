@@ -52,8 +52,9 @@ it.
 Use `--asr-stabilization` to force sliding-window stable-prefix ASR buffering in
 text-only benchmark runs.
 Use `--punctuation-endpoint` to flush complete ASR sentences before the maximum
-buffer limit. Add `--speech-output --tts apple --play-output` to benchmark the
-full local speech path and validate `result_ready` plus playback events.
+buffer limit. Add `--speech-output --tts moss --play-output` to benchmark the
+streaming local speech path. Use `--tts chatterbox-mlx` for the quality mode.
+The summary reports TTS first-audio latency separately from full output latency.
 The runner also prepares `mlx.metallib` after SwiftPM build so MLX can load its
 Metal kernels at runtime.
 
@@ -71,7 +72,7 @@ Tools/run_live_benchmark.py \
   --asr-stabilization \
   --punctuation-endpoint \
   --speech-output \
-  --tts apple \
+  --tts moss \
   --play-output \
   --examples 3 \
   --last-examples 3 \

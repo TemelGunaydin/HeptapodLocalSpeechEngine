@@ -446,17 +446,27 @@ def benchmark_command(
             command.extend(["--output-dir", str(speech_output_dir)])
         if plays_output:
             command.append("--play-output")
-        if tts_backend == "chatterbox":
+        if tts_backend in {"moss", "chatterbox", "chatterbox-mlx"}:
+            script_name = {
+                "moss": "moss_tts_nano_bridge.py",
+                "chatterbox": "chatterbox_tts.py",
+                "chatterbox-mlx": "chatterbox_mlx_tts.py",
+            }[tts_backend]
             command.extend(
                 [
                     "--tts-script",
-                    str(REPO_ROOT / "Tools" / "chatterbox_tts.py"),
+                    str(REPO_ROOT / "Tools" / script_name),
                     "--tts-python",
                     tts_python_executable,
-                    "--tts-device",
-                    tts_device,
                 ]
             )
+            if tts_backend in {"chatterbox", "chatterbox-mlx"}:
+                command.extend(
+                    [
+                        "--tts-device",
+                        "mps" if tts_backend == "chatterbox-mlx" else tts_device,
+                    ]
+                )
     else:
         command.append("--text-only")
     if uses_asr_stabilization:
@@ -822,14 +832,14 @@ def main() -> int:
     )
     parser.add_argument(
         "--tts",
-        choices=["apple", "kokoro", "chatterbox"],
-        default="apple",
-        help="TTS backend used with --speech-output. Defaults to the macOS system voice.",
+        choices=["moss", "chatterbox-mlx", "apple", "kokoro", "chatterbox"],
+        default="moss",
+        help="TTS backend used with --speech-output. Defaults to streaming MOSS-TTS-Nano.",
     )
     parser.add_argument(
         "--tts-python",
-        default=".venv-chatterbox311/bin/python",
-        help="Python executable used by the Chatterbox bridge.",
+        default=None,
+        help="Python executable for a Python TTS backend. Defaults to its repository venv.",
     )
     parser.add_argument(
         "--tts-device",
@@ -859,13 +869,18 @@ def main() -> int:
     playback_audio_path = args.playback_audio.expanduser().resolve() if args.playback_audio else None
     output_dir = args.output_dir.expanduser().resolve()
     playback_browser_profile_dir = output_dir / "playback-browser-profile" if args.playback_browser else None
-    tts_python_path = Path(args.tts_python).expanduser()
+    tts_python_value = args.tts_python or {
+        "moss": ".venv-moss-tts-nano/bin/python",
+        "chatterbox-mlx": ".venv-chatterbox-mlx/bin/python",
+        "chatterbox": ".venv-chatterbox311/bin/python",
+    }.get(args.tts, "python3")
+    tts_python_path = Path(tts_python_value).expanduser()
     tts_python_executable = (
         str(tts_python_path)
         if tts_python_path.is_absolute()
         else str((REPO_ROOT / tts_python_path).absolute())
         if tts_python_path.parent != Path(".")
-        else args.tts_python
+        else tts_python_value
     )
     cases = args.cases or default_cases(args.preset)
 
@@ -881,7 +896,7 @@ def main() -> int:
     target_language = args.to.strip().lower().replace("_", "-").split("-", maxsplit=1)[0]
     if args.speech_output and args.tts == "kokoro" and target_language not in KOKORO_LANGUAGE_CODES:
         parser.error(
-            f"Kokoro does not support target language '{args.to}'; use --tts apple or --tts chatterbox"
+            f"Kokoro does not support target language '{args.to}'; use --tts moss or --tts chatterbox-mlx"
         )
 
     if args.system_audio:
@@ -910,14 +925,19 @@ def main() -> int:
         parser.error(f"browser playback page is missing: {BROWSER_PLAYBACK_PAGE}")
     if not args.dry_run and playback_audio_path is not None and args.playback_browser is None and shutil.which("afplay") is None:
         parser.error("afplay is required for --playback-audio")
-    if not args.dry_run and args.speech_output and args.tts == "chatterbox":
-        if not (REPO_ROOT / "Tools" / "chatterbox_tts.py").exists():
-            parser.error("Tools/chatterbox_tts.py is required for Chatterbox")
+    if not args.dry_run and args.speech_output and args.tts in {"moss", "chatterbox", "chatterbox-mlx"}:
+        script_name = {
+            "moss": "moss_tts_nano_bridge.py",
+            "chatterbox": "chatterbox_tts.py",
+            "chatterbox-mlx": "chatterbox_mlx_tts.py",
+        }[args.tts]
+        if not (REPO_ROOT / "Tools" / script_name).exists():
+            parser.error(f"Tools/{script_name} is required for {args.tts}")
         if Path(tts_python_executable).is_absolute():
             if not Path(tts_python_executable).is_file():
-                parser.error(f"Chatterbox Python executable does not exist: {tts_python_executable}")
+                parser.error(f"TTS Python executable does not exist: {tts_python_executable}")
         elif shutil.which(tts_python_executable) is None:
-            parser.error(f"Chatterbox Python executable was not found: {tts_python_executable}")
+            parser.error(f"TTS Python executable was not found: {tts_python_executable}")
 
     if not args.skip_build:
         build_command = ["swift", "build", "--product", DEMO_PRODUCT]

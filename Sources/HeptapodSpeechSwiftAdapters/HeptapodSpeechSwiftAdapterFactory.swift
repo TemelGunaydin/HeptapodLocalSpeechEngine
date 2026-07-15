@@ -8,6 +8,8 @@ public enum HeptapodSpeechSwiftAdapterFactory {
             HeptapodModelDescriptor.qwenASRCompact.id,
             HeptapodModelDescriptor.qwenASRHighQuality.id,
             HeptapodModelDescriptor.madladTranslator.id,
+            HeptapodModelDescriptor.mossTTSNano.id,
+            HeptapodModelDescriptor.chatterboxMLXTTS.id,
             HeptapodModelDescriptor.chatterboxTTS.id,
             HeptapodModelDescriptor.kokoroTTS.id
         ]
@@ -35,6 +37,16 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         chatterboxVoicePromptURL: URL? = nil,
         chatterboxDevice: String? = nil,
         chatterboxUsesPersistentWorker: Bool = true,
+        chatterboxMLXPythonExecutable: String = ".venv-chatterbox-mlx/bin/python",
+        chatterboxMLXScriptURL: URL? = nil,
+        chatterboxMLXVoicePromptURL: URL? = nil,
+        chatterboxMLXUsesPersistentWorker: Bool = true,
+        mossPythonExecutable: String = ".venv-moss-tts-nano/bin/python",
+        mossScriptURL: URL? = nil,
+        mossVoicePromptURL: URL? = nil,
+        mossDefaultVoice: String = "Ava",
+        mossModelDirectoryURL: URL? = nil,
+        mossCPUThreads: Int = 8,
         offlineMode: Bool = false
     ) throws -> HeptapodSpeechToSpeechPipeline {
         try requireImplemented(configuration.speechRecognitionModelID, stage: .speechRecognition)
@@ -70,6 +82,16 @@ public enum HeptapodSpeechSwiftAdapterFactory {
                 chatterboxVoicePromptURL: chatterboxVoicePromptURL,
                 chatterboxDevice: chatterboxDevice,
                 chatterboxUsesPersistentWorker: chatterboxUsesPersistentWorker,
+                chatterboxMLXPythonExecutable: chatterboxMLXPythonExecutable,
+                chatterboxMLXScriptURL: chatterboxMLXScriptURL,
+                chatterboxMLXVoicePromptURL: chatterboxMLXVoicePromptURL,
+                chatterboxMLXUsesPersistentWorker: chatterboxMLXUsesPersistentWorker,
+                mossPythonExecutable: mossPythonExecutable,
+                mossScriptURL: mossScriptURL,
+                mossVoicePromptURL: mossVoicePromptURL,
+                mossDefaultVoice: mossDefaultVoice,
+                mossModelDirectoryURL: mossModelDirectoryURL,
+                mossCPUThreads: mossCPUThreads,
                 offlineMode: offlineMode
             )
         )
@@ -99,6 +121,16 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         chatterboxVoicePromptURL: URL?,
         chatterboxDevice: String?,
         chatterboxUsesPersistentWorker: Bool,
+        chatterboxMLXPythonExecutable: String,
+        chatterboxMLXScriptURL: URL?,
+        chatterboxMLXVoicePromptURL: URL?,
+        chatterboxMLXUsesPersistentWorker: Bool,
+        mossPythonExecutable: String,
+        mossScriptURL: URL?,
+        mossVoicePromptURL: URL?,
+        mossDefaultVoice: String,
+        mossModelDirectoryURL: URL?,
+        mossCPUThreads: Int,
         offlineMode: Bool
     ) -> any HeptapodSpeechSynthesizer {
         switch modelID {
@@ -113,6 +145,25 @@ public enum HeptapodSpeechSwiftAdapterFactory {
                 voicePromptURL: chatterboxVoicePromptURL,
                 device: chatterboxDevice,
                 usesPersistentWorker: chatterboxUsesPersistentWorker
+            )
+        case HeptapodModelDescriptor.chatterboxMLXTTS.id:
+            HeptapodChatterboxTTSAdapter(
+                descriptor: .chatterboxMLXTTS,
+                pythonExecutable: chatterboxMLXPythonExecutable,
+                scriptURL: chatterboxMLXScriptURL
+                    ?? URL(fileURLWithPath: "Tools/chatterbox_mlx_tts.py"),
+                voicePromptURL: chatterboxMLXVoicePromptURL,
+                device: "mps",
+                usesPersistentWorker: chatterboxMLXUsesPersistentWorker
+            )
+        case HeptapodModelDescriptor.mossTTSNano.id:
+            HeptapodMossTTSNanoAdapter(
+                pythonExecutable: mossPythonExecutable,
+                scriptURL: mossScriptURL,
+                voicePromptURL: mossVoicePromptURL,
+                defaultVoice: mossDefaultVoice,
+                modelDirectoryURL: mossModelDirectoryURL,
+                cpuThreads: mossCPUThreads
             )
         default:
             HeptapodKokoroTTSAdapter(modelID: kokoroModelID, offlineMode: offlineMode)

@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import trace_summary  # noqa: E402
+
+
+class TraceSummaryFirstAudioTests(unittest.TestCase):
+    def load(self, events: list[dict[str, object]]) -> trace_summary.TraceSummary:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "trace.jsonl"
+            path.write_text(
+                "".join(json.dumps(event) + "\n" for event in events),
+                encoding="utf-8",
+            )
+            return trace_summary.load_trace(path)
+
+    def test_explicit_first_audio_is_not_averaged_with_playback_start(self) -> None:
+        summary = self.load(
+            [
+                {"event": "tts_first_audio", "firstAudioLatencySeconds": 1.4},
+                {"event": "playback_started", "playbackLatencySeconds": 0.01},
+            ]
+        )
+
+        self.assertEqual(summary.playback_start_latency.count, 1)
+        self.assertAlmostEqual(summary.playback_start_latency.average or 0, 1.4)
+
+    def test_prototype_first_audio_field_remains_supported(self) -> None:
+        summary = self.load(
+            [
+                {
+                    "event": "playback_started",
+                    "firstAudioLatencySeconds": 0.75,
+                    "playbackLatencySeconds": 0.02,
+                }
+            ]
+        )
+
+        self.assertAlmostEqual(summary.playback_start_latency.average or 0, 0.75)
+
+    def test_playback_latency_is_used_only_as_legacy_fallback(self) -> None:
+        summary = self.load(
+            [{"event": "playback_started", "playbackLatencySeconds": 0.2}]
+        )
+
+        self.assertAlmostEqual(summary.playback_start_latency.average or 0, 0.2)
+
+
+if __name__ == "__main__":
+    unittest.main()

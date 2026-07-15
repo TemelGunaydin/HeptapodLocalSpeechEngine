@@ -192,4 +192,15 @@ public actor HeptapodSpeechToSpeechPipeline {
             targetLanguageCode: targetLanguageCode
         )
     }
+
+    public func synthesizeStream(
+        _ translation: HeptapodTranslatedText,
+        voiceID: String? = nil
+    ) async -> AsyncThrowingStream<HeptapodSynthesizedSpeech, Error> {
+        await synthesizer.synthesizeStream(
+            translation.translatedText,
+            languageCode: translation.targetLanguageCode,
+            voiceID: voiceID
+        )
+    }
 }

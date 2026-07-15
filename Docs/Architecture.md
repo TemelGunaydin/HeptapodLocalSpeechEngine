@@ -72,7 +72,8 @@ The live session owns:
 - skipping silent chunks,
 - running optional ring-buffer/sliding-window ASR stabilization,
 - queueing stable transcript segments into serial translation/TTS synthesis,
-- queueing synthesized audio into a serial playback backbuffer,
+- forwarding streaming TTS PCM chunks into a serial playback backbuffer,
+- increasing playback rate only when the translated-audio backlog grows,
 - keeping input/ASR work moving while previous translated audio is translating,
   synthesizing, or playing.
 
@@ -92,6 +93,6 @@ This keeps the product free to move from Qwen to WhisperKit, from MADLAD to NLLB
 
 `HeptapodSpeechSwiftAdapters` is the first concrete adapter target. It keeps
 `speech-swift` and AVFoundation dependencies out of the model-agnostic core
-package while making Silero VAD, Qwen3-ASR, MADLAD-400, native macOS speech,
-Kokoro, Chatterbox Python TTS, microphone capture, system-audio capture, and
-playback usable through the core engine protocols.
+package while making Silero VAD, Qwen3-ASR, MADLAD-400, streaming MOSS-TTS-Nano,
+Chatterbox MLX/PyTorch TTS, native macOS speech, Kokoro, microphone capture,
+system-audio capture, and playback usable through the core engine protocols.

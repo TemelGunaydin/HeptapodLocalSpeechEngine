@@ -70,7 +70,8 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
     elapsed_seconds: float | None = None
     transcript_latencies: list[float] = []
     translation_latencies: list[float] = []
-    playback_start_latencies: list[float] = []
+    first_audio_latencies: list[float] = []
+    playback_start_fallback_latencies: list[float] = []
     playback_latencies: list[float] = []
     audio_rms_values: list[float] = []
     audio_peak_values: list[float] = []
@@ -116,8 +117,15 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
                     translation_latencies.append(float(raw_latency))
 
             raw_playback_latency = item.get("playbackLatencySeconds")
-            if event == "playback_started" and isinstance(raw_playback_latency, (int, float)):
-                playback_start_latencies.append(float(raw_playback_latency))
+            raw_first_audio_latency = item.get("firstAudioLatencySeconds")
+            if event == "tts_first_audio":
+                if isinstance(raw_first_audio_latency, (int, float)):
+                    first_audio_latencies.append(float(raw_first_audio_latency))
+            elif event == "playback_started" and isinstance(raw_first_audio_latency, (int, float)):
+                # Compatibility with traces written during the streaming-TTS prototype.
+                first_audio_latencies.append(float(raw_first_audio_latency))
+            elif event == "playback_started" and isinstance(raw_playback_latency, (int, float)):
+                playback_start_fallback_latencies.append(float(raw_playback_latency))
             if event == "playback_completed":
                 raw_playback_duration = item.get("playbackDurationSeconds")
                 if isinstance(raw_playback_duration, (int, float)):
@@ -160,7 +168,9 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
         elapsed_seconds=elapsed_seconds,
         transcript_latency=LatencyStats.from_values(transcript_latencies),
         translation_latency=LatencyStats.from_values(translation_latencies),
-        playback_start_latency=LatencyStats.from_values(playback_start_latencies),
+        playback_start_latency=LatencyStats.from_values(
+            first_audio_latencies or playback_start_fallback_latencies
+        ),
         playback_latency=LatencyStats.from_values(playback_latencies),
         audio_rms=LatencyStats.from_values(audio_rms_values),
         audio_peak=LatencyStats.from_values(audio_peak_values),
@@ -208,7 +218,7 @@ def first_command_arg(command: list[str], option: str) -> str:
 
 def markdown_table(summaries: list[TraceSummary]) -> str:
     rows = [
-        "| Trace | ASR | Chunk | Buffer | Segments | Audio RMS | Audio Peak | Transcripts | Outputs | Repeated MT | ASR avg | Output avg | Playbacks | Start avg | Duration avg | Finished |",
+        "| Trace | ASR | Chunk | Buffer | Segments | Audio RMS | Audio Peak | Transcripts | Outputs | Repeated MT | ASR avg | Output avg | Playbacks | First audio avg | Duration avg | Finished |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for summary in summaries:

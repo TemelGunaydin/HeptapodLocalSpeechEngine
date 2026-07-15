@@ -29,6 +29,40 @@ public protocol HeptapodSpeechSynthesizer: HeptapodEngineComponent {
         languageCode: String,
         voiceID: String?
     ) async throws -> HeptapodSynthesizedSpeech
+
+    func synthesizeStream(
+        _ text: String,
+        languageCode: String,
+        voiceID: String?
+    ) async -> AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
+}
+
+public extension HeptapodSpeechSynthesizer {
+    func synthesizeStream(
+        _ text: String,
+        languageCode: String,
+        voiceID: String?
+    ) async -> AsyncThrowingStream<HeptapodSynthesizedSpeech, Error> {
+        let pair = AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>.makeStream()
+        let task = Task {
+            do {
+                pair.continuation.yield(
+                    try await synthesize(
+                        text,
+                        languageCode: languageCode,
+                        voiceID: voiceID
+                    )
+                )
+                pair.continuation.finish()
+            } catch {
+                pair.continuation.finish(throwing: error)
+            }
+        }
+        pair.continuation.onTermination = { _ in
+            task.cancel()
+        }
+        return pair.stream
+    }
 }
 
 public protocol HeptapodDirectSpeechTranslator: HeptapodEngineComponent {

@@ -65,6 +65,7 @@ HeptapodLocalSpeechEngine/
       HeptapodMADLADTranslatorAdapter.swift
       HeptapodKokoroTTSAdapter.swift
       HeptapodChatterboxTTSAdapter.swift
+      HeptapodMossTTSNanoAdapter.swift
       HeptapodMacOSSpeechSynthesizerAdapter.swift
       HeptapodSpeechSwiftAdapterFactory.swift
     HeptapodLiveSpeechDemo/
@@ -159,10 +160,11 @@ Real macOS system-audio live session:
 Tools/run_live_translation.sh
 ```
 
-This defaults to English/auto-detected source audio, Turkish output, compact
-Qwen ASR, the balanced `1.0s / 4 segment` endpointing profile, and the installed
-macOS Turkish voice. The pipeline is fully local after model weights are cached.
-It does not use WebSocket or a local server.
+This defaults to English source audio, Turkish output, compact Qwen ASR, the
+balanced `1.0s / 4 segment` endpointing profile, and streaming MOSS-TTS-Nano.
+The pipeline is fully local after model weights are cached. It does not use a
+WebSocket or remote server; optional Python models run as local persistent child
+processes over JSON-lines pipes.
 
 The launcher intentionally uses `xcrun swift`, so the Swift compiler and macOS
 SDK come from the same active Xcode toolchain. A bare `swift` command may resolve
@@ -205,12 +207,12 @@ segment; it starts sooner but often splits a sentence into unnatural phrases.
 
 Translation/TTS and playback are queued like a small backbuffer. Once a sentence
 or stable phrase is flushed, the live input loop submits it to a serial synthesis
-queue and immediately keeps consuming audio. The synthesis queue prepares
-translation plus TTS audio in order, then hands ready audio to a separate serial
-playback queue. Live speaker output uses pitch-preserving `1.15x` playback to
-limit queue growth; WAV archive output remains at the original TTS rate. This
-lets the next segment transcribe while the previous segment is translating,
-synthesizing, or playing.
+queue and immediately keeps consuming audio. Streaming TTS chunks are handed to
+the serial playback queue as soon as they arrive; the full waveform does not need
+to finish first. Speaker playback starts at `1.0x` and rises gradually to at most
+`1.15x` only when the backlog grows. WAV archive output remains at the original
+TTS rate. The next segment can transcribe while the previous segment is
+translating, synthesizing, or playing.
 
 Use `--text-only` when local TTS quality is not useful. In this mode the demo
 prepares only VAD, ASR, and translation, skips TTS model load/inference entirely,
@@ -219,9 +221,9 @@ audio playback events.
 
 Use `--trace /tmp/heptapod-run.jsonl` to write JSON-lines timestamps for later
 performance comparison. The trace records run start/finish, segment starts,
-per-segment audio RMS/peak levels, ASR-ready latency, post-ASR output latency,
-playback completion latency, transcript/translation text, generated audio byte
-count, and the command used for the run.
+per-segment audio RMS/peak levels, ASR-ready latency, TTS first-audio latency,
+post-ASR output latency, playback completion latency, transcript/translation
+text, generated audio byte count, and the command used for the run.
 
 Repeatable system-audio smoke test:
 
@@ -236,7 +238,7 @@ Tools/run_live_benchmark.py \
   --asr-stabilization \
   --punctuation-endpoint \
   --speech-output \
-  --tts apple \
+  --tts moss \
   --play-output \
   --examples 3 \
   --last-examples 3 \
@@ -251,27 +253,31 @@ repeatable browser-audio smoke. Playback-audio runs require at least one output
 event by default (`translation_ready` for text or `result_ready` for speech), so
 silent capture is reported as a failed case.
 
-More natural Chatterbox TTS output:
+Install the low-latency live voice once:
 
 ```bash
-/opt/homebrew/bin/python3.11 -m venv .venv-chatterbox311
-.venv-chatterbox311/bin/pip install chatterbox-tts torchaudio
-
-Tools/run_live_translation.sh \
-  --tts chatterbox \
-  --tts-python .venv-chatterbox311/bin/python \
-  --tts-device mps
+Tools/setup_moss_tts_nano.sh
+Tools/run_live_translation.sh
 ```
 
-Chatterbox uses a persistent Python worker by default, so the model is loaded
-once and later segments are sent over JSON-lines instead of starting a new
-Python process every time. Pass `--tts-one-shot` to use the older per-segment
-process mode for debugging.
+Install and select the higher-quality Metal backend:
 
-Chatterbox is a quality/reference backend, not the current live default. On the
-tested Apple Silicon machine it produced more natural Turkish but averaged
-about 23 seconds from transcript to ready audio. The macOS/Yelda path averaged
-about 1.7-1.9 seconds in the repeatable browser fixture.
+```bash
+Tools/setup_chatterbox_mlx.sh
+
+Tools/run_live_translation.sh \
+  --tts chatterbox-mlx
+```
+
+Both backends keep their model loaded in a persistent worker. MOSS streams
+48 kHz PCM chunks and keeps Metal available for ASR/MT by using ONNX Runtime on
+CPU. Chatterbox MLX generates a complete 24 kHz segment on Metal, then plays it.
+Pass `--tts-one-shot` only for Chatterbox bridge debugging.
+
+On the tested M3 Max, MOSS produced its first PCM 1.40 seconds after ASR and
+finished at 3.36 seconds. Chatterbox MLX produced its complete higher-quality
+segment at 3.48 seconds. The older PyTorch Chatterbox backend remains available
+as `--tts chatterbox` for comparison, but is not recommended for live output.
 
 For voice cloning, pass a permitted 5-10 second reference WAV:
 
@@ -299,9 +305,9 @@ The file input path can point to WAV, M4A, MP3, or CAF audio that AVFoundation
 can decode locally.
 
 The real demo uses Qwen3-ASR and MADLAD-400 through the
-`HeptapodSpeechSwiftAdapters` target, which wraps `speech-swift`. Speech output
-can use the native macOS voices, Kokoro for its supported languages, or
-Chatterbox through a local Python bridge for more natural but slower output.
+`HeptapodSpeechSwiftAdapters` target, which wraps `speech-swift`. The live demo
+adds MOSS streaming, Chatterbox MLX quality output, native macOS voices, Kokoro,
+and the older PyTorch Chatterbox bridge.
 The first run downloads model weights from Hugging Face and caches them locally.
 The JSON report records model load times, per-stage inference latency, transcript,
 translation, audio durations, and output paths.
@@ -340,9 +346,11 @@ Text translation alternatives:
 
 TTS alternatives:
 
-- macOS System Voice: zero-download, fast Turkish live default on macOS.
+- MOSS-TTS-Nano 100M: streaming Turkish live default; CPU ONNX leaves Metal for ASR/MT.
+- Chatterbox MLX FP16: more natural Turkish quality mode; faster than playback on the tested M3 Max.
+- macOS System Voice: zero-download fallback using installed voices.
 - Kokoro 82M: small option for en/fr/es/ja/zh/hi/pt/it; Turkish is rejected.
-- Chatterbox Multilingual: more natural Turkish, but too slow for the current live default.
+- Chatterbox PyTorch: retained as the older slow reference backend.
 - Qwen3 TTS 0.6B: better natural speech, about 1.2 GB installed.
 - CosyVoice3 0.5B: expressive TTS alternative, about 1.0 GB installed.
 
@@ -367,6 +375,8 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 | MT | MADLAD-400 3B | MLX Swift | Adapter target ready | ~2.8 GB | First local translation | Quality varies by language pair |
 | MT | NLLB Distilled 600M | Custom/converted | Planned | ~1.6 GB | Better translation candidate | Runtime conversion needed |
 | MT | SeamlessM4T text path | Seamless | Research | ~4.8 GB | Unified research path | Heavy packaging |
+| TTS | MOSS-TTS-Nano 100M | ONNX Runtime/CPU | Adapter target ready | ~1.5 GB | Streaming Turkish live default | Less expressive than quality mode |
+| TTS | Chatterbox MLX FP16 | MLX/Python | Adapter target ready | ~3.5 GB | Natural multilingual quality mode | Full segment before playback; Metal contention |
 | TTS | macOS System Voice | AVFoundation/`say` | Adapter target ready | 0 MB | Fast Turkish live output | Voice depends on installed macOS assets |
 | TTS | Kokoro 82M | CoreML | Adapter target ready | ~130 MB | Small supported-language TTS | No Turkish phonemizer |
 | TTS | Chatterbox Multilingual | PyTorch/MPS | Adapter target ready | ~4.3 GB | Natural multilingual reference | About 23s output latency in the tested live run |
@@ -380,8 +390,8 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 Starter local mode:
 
 ```text
-Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + macOS System Voice
-Estimated downloaded model size: roughly 3.6 GB
+Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + MOSS-TTS-Nano
+Estimated downloaded model size: roughly 4.3 GB
 ```
 
 Higher-quality local mode:
@@ -477,10 +487,10 @@ Useful advanced metrics:
    - Adds a small TTS option for supported languages; Turkish is rejected explicitly.
    - Keep this as the smallest installed footprint target.
 
-4. `HeptapodMacOSSpeechSynthesizerAdapter` / `HeptapodChatterboxTTSAdapter`
+4. `HeptapodMossTTSNanoAdapter` / `HeptapodChatterboxTTSAdapter`
    - Status: ready in `HeptapodSpeechSwiftAdapters`.
-   - Native macOS speech is the low-latency Turkish default.
-   - Chatterbox is retained as the slower natural-voice reference backend.
+   - MOSS is the streaming low-latency Turkish default.
+   - Chatterbox MLX is the higher-quality segment backend; PyTorch Chatterbox remains a reference.
 
 5. `HeptapodSileroVADAdapter`
    - Status: ready in `HeptapodSpeechSwiftAdapters`.
@@ -557,7 +567,7 @@ This package currently contains:
 - Detailed pipeline results that expose transcript, translated text, and synthesized speech.
 - Unavailable placeholder adapters for not-yet-integrated models.
 - A placeholder adapter factory that can build the selected pipeline shape before real inference adapters exist.
-- `HeptapodSpeechSwiftAdapters`, which provides runnable Silero VAD, Qwen3-ASR, MADLAD-400, macOS System Voice, Kokoro, Chatterbox, AVAudio microphone/playback, and ScreenCaptureKit system-audio adapters.
+- `HeptapodSpeechSwiftAdapters`, which provides runnable Silero VAD, Qwen3-ASR, MADLAD-400, MOSS-TTS-Nano streaming, Chatterbox MLX/PyTorch, macOS System Voice, Kokoro, AVAudio microphone/playback, and ScreenCaptureKit system-audio adapters.
 - A real file-based speech-to-speech smoke test executable and recorded experiment result.
 
 It runs file-based local inference through the speech-swift adapter target and

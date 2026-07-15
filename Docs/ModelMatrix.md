@@ -1,10 +1,9 @@
 # Model Matrix
 
 All numbers are estimates until each adapter pins a model artifact and cache layout.
-Silero VAD, Qwen3-ASR, MADLAD, native macOS voices, Kokoro, and Chatterbox are
-runnable today through `HeptapodSpeechSwiftAdapters`. Native macOS speech is the
-current low-latency Turkish backend; Chatterbox is the slower natural-voice
-reference.
+Silero VAD, Qwen3-ASR, MADLAD, MOSS-TTS-Nano, Chatterbox MLX, native macOS
+voices, Kokoro, and the older PyTorch Chatterbox bridge are runnable today.
+MOSS is the streaming Turkish default; Chatterbox MLX is the quality mode.
 
 Nemotron 3.5 ASR Streaming is tracked through the MLX community conversion,
 not the original NeMo-only path. It currently needs `mlx-audio` with Nemotron
@@ -23,7 +22,9 @@ Swift-native adapter.
 | MT | MADLAD-400 3B | Adapter target ready | ~2.8 GB | Practical first local translator |
 | MT | NLLB Distilled 600M | Planned | ~1.6 GB | Translation quality candidate |
 | MT | SeamlessM4T text path | Research | ~4.8 GB | Heavy unified translation research |
-| TTS | macOS System Voice | Adapter target ready | 0 MB | Fast Turkish live default; uses installed voices |
+| TTS | MOSS-TTS-Nano 100M | Streaming bridge ready | ~1.5 GB | First PCM before full synthesis; CPU ONNX |
+| TTS | Chatterbox MLX FP16 | Python/MLX bridge ready | ~3.5 GB | Natural Turkish quality mode; full segments |
+| TTS | macOS System Voice | Adapter target ready | 0 MB | Fast fallback; uses installed voices |
 | TTS | Kokoro 82M | Adapter target ready | ~130 MB | Small supported-language TTS; no Turkish phonemizer |
 | TTS | Chatterbox TTS | Python bridge ready | ~4.3 GB | Natural Turkish; about 23s output latency in the tested run |
 | TTS | Qwen3 TTS 0.6B | Planned | ~1.2 GB | Natural local voice candidate |
@@ -36,13 +37,13 @@ Swift-native adapter.
 Starter:
 
 ```text
-Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + macOS System Voice
+Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + MOSS-TTS-Nano
 ```
 
 Natural voice:
 
 ```text
-Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + Chatterbox
+Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + Chatterbox MLX
 ```
 
 Quality:

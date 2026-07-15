@@ -22,6 +22,8 @@ func catalogProvidesAlternativesForEachPipelineStage() {
     #expect(catalog.models(for: .speechRecognition).count >= 3)
     #expect(catalog.models(for: .textTranslation).count >= 2)
     #expect(catalog.models(for: .speechSynthesis).count >= 2)
+    #expect(catalog.models(for: .speechSynthesis).map(\.id).contains(HeptapodModelDescriptor.mossTTSNano.id))
+    #expect(catalog.models(for: .speechSynthesis).map(\.id).contains(HeptapodModelDescriptor.chatterboxMLXTTS.id))
     #expect(catalog.models(for: .speechSynthesis).map(\.id).contains(HeptapodModelDescriptor.chatterboxTTS.id))
     #expect(catalog.models(for: .directSpeechToSpeech).isEmpty == false)
     #expect(catalog.models(for: .directSpeechToSpeech).map(\.id).contains(HeptapodModelDescriptor.seamlessStreamingDirectSpeech.id))
@@ -152,6 +154,37 @@ func speechSwiftFactoryReportsChatterboxPipelineRunnable() {
     #expect(readiness.selectedDescriptors.map(\.id).contains(HeptapodModelDescriptor.chatterboxTTS.id))
 }
 
+@Test
+func speechSwiftFactoryReportsMossStreamingPipelineRunnable() {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.mossTTSNano.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
+
+    #expect(readiness.canRunInference)
+    #expect(readiness.unavailableDescriptors.isEmpty)
+    #expect(HeptapodModelDescriptor.mossTTSNano.capabilities.contains(.streamingTTS))
+    #expect(HeptapodModelDescriptor.mossTTSNano.languageCoverage.targetLanguageCodes.contains("tr"))
+}
+
+@Test
+func speechSwiftFactoryReportsChatterboxMLXPipelineRunnable() {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.chatterboxMLXTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
+
+    #expect(readiness.canRunInference)
+    #expect(readiness.unavailableDescriptors.isEmpty)
+    #expect(HeptapodModelDescriptor.chatterboxMLXTTS.languageCoverage.targetLanguageCodes.contains("tr"))
+}
+
 #if os(macOS)
 @Test
 func speechSwiftFactoryReportsMacOSSystemVoicePipelineRunnable() {
@@ -191,6 +224,17 @@ func chatterboxAdapterReportsMissingScriptDuringPrepare() async {
     )
 
     await #expect(throws: HeptapodChatterboxTTSError.self) {
+        try await adapter.prepare()
+    }
+}
+
+@Test
+func mossAdapterReportsMissingScriptDuringPrepare() async {
+    let adapter = HeptapodMossTTSNanoAdapter(
+        scriptURL: URL(fileURLWithPath: "/tmp/heptapod-missing-moss-script-\(UUID().uuidString).py")
+    )
+
+    await #expect(throws: HeptapodMossTTSNanoError.self) {
         try await adapter.prepare()
     }
 }
@@ -310,6 +354,8 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
             break
         case .translation:
             break
+        case .synthesisAudioReady:
+            break
         case .playbackStarted(let index):
             playbackStartIndexes.append(index)
         case .playbackCompleted(let index):
@@ -373,6 +419,8 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
             break
         case .translation:
             break
+        case .synthesisAudioReady:
+            break
         case .playbackStarted:
             break
         case .playbackCompleted(let index):
@@ -385,6 +433,88 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
     #expect(eventNames.firstIndex(of: "result-2")! < eventNames.firstIndex(of: "playback-1")!)
     #expect(eventNames.suffix(2) == ["playback-1", "playback-2"])
     #expect(await playbackSink.playedCount() == 2)
+}
+
+@Test
+func liveSessionStreamsFirstAudioBeforeSynthesisCompletes() async throws {
+    let probe = StreamingProgressProbe()
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.mossTTSNano.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: ProgressiveSynthesizer(probe: probe)
+    )
+    let playbackSink = StreamingRecordingPlaybackSink(probe: probe)
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        playbackSink: playbackSink
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [HeptapodAudioChunk(pcm16: Data("hello".utf8), sampleRate: 16_000)]
+    )
+
+    let events = await session.run(chunks: source.chunks())
+    var resultPCM = Data()
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultPCM = result.speech.pcm16
+        }
+    }
+
+    #expect(await probe.wasFirstPlaybackChunkObservedBeforeSynthesisFinished())
+    #expect(await playbackSink.streamedChunks() == [Data([1, 2]), Data([3, 4])])
+    #expect(resultPCM == Data([1, 2, 3, 4]))
+}
+
+@Test
+func liveSessionReportsFirstAudioWithoutPlaybackSink() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: StubRecognizer(),
+        translator: StubTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [HeptapodAudioChunk(pcm16: Data([1, 2, 3]), sampleRate: 16_000)]
+    )
+
+    let events = await session.run(chunks: source.chunks())
+    var firstAudioIndexes: [Int] = []
+    var playbackEventCount = 0
+    for try await event in events {
+        switch event {
+        case .synthesisAudioReady(let index):
+            firstAudioIndexes.append(index)
+        case .playbackStarted, .playbackCompleted:
+            playbackEventCount += 1
+        default:
+            break
+        }
+    }
+
+    #expect(firstAudioIndexes == [1])
+    #expect(playbackEventCount == 0)
 }
 
 @Test
@@ -432,7 +562,7 @@ func liveSessionTextOnlyTranslatesWithoutSynthesisOrPlayback() async throws {
             eventNames.append("translation")
         case .playbackCompleted(let index):
             playbackIndexes.append(index)
-        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .playbackStarted:
+        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .synthesisAudioReady, .playbackStarted:
             break
         }
     }
@@ -486,7 +616,7 @@ func textOnlyBufferedTranslationNormalizesFragmentedTranscript() async throws {
             transcripts.append(transcript.text)
         case .translation(_, let result):
             translations.append(result.translation.translatedText)
-        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .playbackStarted, .playbackCompleted:
+        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .synthesisAudioReady, .playbackStarted, .playbackCompleted:
             break
         }
     }
@@ -891,7 +1021,7 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
             break
         case .translation:
             break
-        case .silenceSkipped, .playbackStarted, .playbackCompleted:
+        case .silenceSkipped, .synthesisAudioReady, .playbackStarted, .playbackCompleted:
             break
         }
     }
@@ -1456,6 +1586,84 @@ private actor DelayedPlaybackSink: HeptapodSpeechPlaybackSink {
     }
 }
 
+private actor StreamingProgressProbe {
+    private let firstChunkEvents: AsyncStream<Void>
+    private let firstChunkContinuation: AsyncStream<Void>.Continuation
+    private var synthesisFinished = false
+    private var firstPlaybackChunkObservedBeforeFinish = false
+
+    init() {
+        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        firstChunkEvents = pair.stream
+        firstChunkContinuation = pair.continuation
+    }
+
+    func markSynthesisFinished() {
+        synthesisFinished = true
+    }
+
+    func observeFirstPlaybackChunk() {
+        firstPlaybackChunkObservedBeforeFinish = synthesisFinished == false
+        firstChunkContinuation.yield(())
+        firstChunkContinuation.finish()
+    }
+
+    func waitForFirstPlaybackChunk() async -> Bool {
+        let events = firstChunkEvents
+        return await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await _ in events {
+                    return true
+                }
+                return false
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                    return false
+                } catch {
+                    return false
+                }
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+    }
+
+    func wasFirstPlaybackChunkObservedBeforeSynthesisFinished() -> Bool {
+        firstPlaybackChunkObservedBeforeFinish
+    }
+}
+
+private actor StreamingRecordingPlaybackSink: HeptapodStreamingSpeechPlaybackSink {
+    private let probe: StreamingProgressProbe
+    private var chunks: [Data] = []
+
+    init(probe: StreamingProgressProbe) {
+        self.probe = probe
+    }
+
+    func play(_ speech: HeptapodSynthesizedSpeech) async throws {
+        chunks.append(speech.pcm16)
+    }
+
+    func play(
+        _ speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
+    ) async throws {
+        for try await chunk in speechStream {
+            if chunks.isEmpty {
+                await probe.observeFirstPlaybackChunk()
+            }
+            chunks.append(chunk.pcm16)
+        }
+    }
+
+    func streamedChunks() -> [Data] {
+        chunks
+    }
+}
+
 private struct StubTranslator: HeptapodTextTranslator {
     let descriptor = HeptapodModelDescriptor.madladTranslator
 
@@ -1521,6 +1729,57 @@ private struct DelayedSynthesizer: HeptapodSpeechSynthesizer {
     ) async throws -> HeptapodSynthesizedSpeech {
         try await Task.sleep(for: delay)
         return HeptapodSynthesizedSpeech(pcm16: Data([9, 9]), sampleRate: 16_000, languageCode: languageCode)
+    }
+}
+
+private struct ProgressiveSynthesizer: HeptapodSpeechSynthesizer {
+    let descriptor = HeptapodModelDescriptor.mossTTSNano
+    let probe: StreamingProgressProbe
+
+    func prepare() async throws {}
+
+    func synthesize(
+        _ text: String,
+        languageCode: String,
+        voiceID: String?
+    ) async throws -> HeptapodSynthesizedSpeech {
+        HeptapodSynthesizedSpeech(
+            pcm16: Data([1, 2, 3, 4]),
+            sampleRate: 48_000,
+            languageCode: languageCode
+        )
+    }
+
+    func synthesizeStream(
+        _ text: String,
+        languageCode: String,
+        voiceID: String?
+    ) async -> AsyncThrowingStream<HeptapodSynthesizedSpeech, Error> {
+        let probe = probe
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                continuation.yield(
+                    HeptapodSynthesizedSpeech(
+                        pcm16: Data([1, 2]),
+                        sampleRate: 48_000,
+                        languageCode: languageCode
+                    )
+                )
+                _ = await probe.waitForFirstPlaybackChunk()
+                await probe.markSynthesisFinished()
+                continuation.yield(
+                    HeptapodSynthesizedSpeech(
+                        pcm16: Data([3, 4]),
+                        sampleRate: 48_000,
+                        languageCode: languageCode
+                    )
+                )
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
     }
 }
 

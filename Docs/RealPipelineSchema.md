@@ -129,8 +129,9 @@ The demo exposes `--latency low|balanced|quality`, `--chunk-duration`,
 `--max-buffered-segments`, `--punctuation-endpoint`, and
 `--no-asr-stabilization` so the cascaded local pipeline can move along the
 speed/quality tradeoff without changing code.
-`--trace <path>` writes JSON-lines timestamps for ASR-ready, post-ASR output,
-and playback completion so runs can be compared without terminal scraping.
+`--trace <path>` writes JSON-lines timestamps for ASR-ready, TTS first audio,
+post-ASR output, and playback completion so runs can be compared without
+terminal scraping.
 `--text-only` skips TTS model preparation, synthesis, playback, and WAV output.
 That mode is currently the recommended low-latency local test path when the
 available offline voices are not natural enough.
@@ -143,7 +144,7 @@ audio chunks
   -> sliding ASR window / stable prefix delta
   -> sentence buffer
   -> translation queue
-  -> optional TTS/playback queue
+  -> streaming TTS / playback queue
 ```
 
 The Qwen ASR adapter remains chunk-based, but the live session now wraps it in a
@@ -156,17 +157,16 @@ intentionally aggressive at 0.75 second chunks and one buffered segment.
 
 The synthesis queue and playback queue are serial and nonblocking for the input
 loop. This gives the pipeline a backbuffer-like shape: later segments can be
-translated and synthesized while an earlier segment is still playing. The
-native macOS Turkish voice is the current fast live backend. Chatterbox has a
-persistent Python worker but remains a quality reference because its tested
-post-ASR output latency was about 23 seconds. The next OpenAI-like step is a
-model-native streaming ASR backend and streaming TTS deltas instead of
-whole-segment WAV output.
+translated and synthesized while an earlier segment is still playing.
+MOSS-TTS-Nano is the live default and forwards 48 kHz PCM chunks before the full
+waveform is complete. Chatterbox MLX is the higher-quality segment mode; the
+older PyTorch Chatterbox bridge remains a slow reference. The next OpenAI-like
+step is a model-native streaming ASR backend and incremental translation.
 
-The demo time-stretches live speaker playback to `1.15x` through
-`AVAudioUnitTimePitch` while preserving pitch. File sink WAVs retain the
-original 210 WPM synthesis output. Trace events distinguish output-ready,
-playback-start queue wait, and playback duration.
+The demo starts live speaker playback at `1.0x` and increases it through
+`AVAudioUnitTimePitch` only when queued translated segments accumulate, capped
+at `1.15x`. File sink WAVs retain the original synthesis rate. Trace events
+distinguish first PCM, full output readiness, and playback duration.
 
 The remaining work is app-level polish: permission UX, background audio
 behavior, streaming partial-ASR improvements, and production playback
