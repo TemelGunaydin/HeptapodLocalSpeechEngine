@@ -4,7 +4,10 @@
   <img src="Assets/heptapod-logo.png" alt="Heptapod app logo" width="160">
 </p>
 
-HeptapodLocalSpeechEngine is a Swift package architecture for local speech-to-speech translation on Apple platforms. The goal is to build a private, offline-capable alternative to cloud realtime speech translation for Heptapod and future apps.
+HeptapodLocalSpeechEngine is a Swift package and runnable macOS demo for local
+speech-to-speech translation on Apple platforms. Anyone can clone the repository,
+download the required model weights, and translate microphone, system, or file
+audio locally without sending speech to a remote service.
 
 The package is intentionally model-agnostic. Each stage can be swapped independently:
 
@@ -18,16 +21,38 @@ There is also a research slot for direct speech-to-speech models:
 Audio -> Direct S2ST -> Audio
 ```
 
-## Product Goal
+## Project Goal
 
-The first production goal is not to beat OpenAI Realtime immediately. The first goal is a local mode that:
+The project provides a practical local live-translation pipeline that:
 
-- avoids cloud minutes for Basic/Starter users,
-- works with private local audio,
+- keeps captured speech and generated audio on the local machine,
+- works with microphone, macOS system audio, and local audio files,
+- supports low-latency and higher-quality local voice modes,
 - gives clear model size and quality tradeoffs,
-- can improve over time as better ASR, translation, and TTS adapters are added.
+- can adopt better ASR, translation, and TTS adapters over time.
 
-OpenAI Realtime gives a single cloud service for low-latency speech-to-speech translation. Local models are not yet as clean for production, so the practical local path is a staged pipeline. The package keeps each stage behind a protocol so Heptapod can choose a small/private mode or a higher-quality/heavier mode.
+The practical local path is currently a staged pipeline. Each stage stays behind
+a protocol so applications can choose a compact low-latency configuration or a
+higher-quality configuration without changing the pipeline API.
+
+## Quick Start
+
+Requirements: an Apple Silicon Mac, full Xcode, and Python 3.11. Setup scripts
+use `/opt/homebrew/bin/python3.11` by default; set `PYTHON_BIN` to override it.
+Setup needs an internet connection once to download dependencies and model
+weights; live translation remains local after those files are cached.
+
+```bash
+git clone https://github.com/TemelGunaydin/HeptapodLocalSpeechEngine.git
+cd HeptapodLocalSpeechEngine
+
+Tools/setup_moss_tts_nano.sh
+Tools/run_live_translation.sh
+```
+
+Start browser or YouTube playback after capture begins. On the first run, macOS
+may request Screen Recording permission for the terminal. Grant it, then run the
+launcher again.
 
 ## Design Principles
 
@@ -96,7 +121,7 @@ The core protocols are:
 - `HeptapodSpeechSynthesizer`: target text to target speech.
 - `HeptapodDirectSpeechTranslator`: optional research path for direct speech-to-speech.
 
-The normal production pipeline is:
+The default pipeline is:
 
 ```text
 VAD -> ASR -> MT -> TTS
@@ -124,7 +149,7 @@ Preview interactive live session:
 xcrun swift run HeptapodLiveSpeechDemo -- --interactive
 ```
 
-Starter model cache status:
+Local model cache status:
 
 ```bash
 xcrun swift run HeptapodLiveSpeechDemo -- --cache-status
@@ -357,7 +382,7 @@ TTS alternatives:
 Direct speech-to-speech:
 
 - SeamlessStreaming: research path for simultaneous speech-to-text/speech-to-speech translation with lower latency than offline SeamlessM4T-style S2ST.
-- SeamlessM4T v2: closest research family to direct local S2ST, but too heavy to be the first production path.
+- SeamlessM4T v2: closest research family to direct local S2ST, but too heavy to be the default path.
 
 All file sizes are estimates until each adapter owns a concrete model artifact and cache layout.
 
@@ -366,7 +391,7 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 | Stage | Model | Runtime | Status | Estimated Install | Best For | Main Tradeoff |
 | --- | --- | --- | --- | ---: | --- | --- |
 | VAD | Silero VAD | CoreML | Adapter target ready | ~8 MB | Silence gating | No transcription |
-| ASR | Qwen3 ASR 0.6B 4-bit | MLX Swift | Adapter target ready | ~760 MB | Starter local mode | Segment-based, lower noisy-audio accuracy |
+| ASR | Qwen3 ASR 0.6B 4-bit | MLX Swift | Adapter target ready | ~760 MB | Compact local mode | Segment-based, lower noisy-audio accuracy |
 | ASR | Qwen3 ASR 1.7B 8-bit | MLX Swift | Adapter target ready | ~3.6 GB | Higher ASR quality | More memory and disk |
 | ASR | WhisperKit Base | CoreML/WhisperKit | Planned | ~220 MB | Streaming ASR, timestamps | Separate model management |
 | ASR | WhisperKit Large v3 | CoreML/WhisperKit | Planned | ~3.4 GB | Maximum ASR quality | Heavy |
@@ -383,11 +408,11 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 | TTS | Qwen3 TTS 0.6B | MLX Swift | Planned | ~1.2 GB | Natural local speech | Memory/GPU pressure |
 | TTS | CosyVoice3 0.5B | MLX Swift | Planned | ~1.0 GB | Expressive TTS | Adapter and voice management |
 | Direct S2ST | SeamlessStreaming | Seamless | Research | ~10 GB | Simultaneous speech translation | Research runtime, packaging, license validation |
-| Direct S2ST | SeamlessM4T v2 | Seamless | Research | ~10 GB | Single-family speech translation | Too heavy for first production path |
+| Direct S2ST | SeamlessM4T v2 | Seamless | Research | ~10 GB | Single-family speech translation | Too heavy for the default path |
 
-## First Product Targets
+## Reference Configurations
 
-Starter local mode:
+Compact local mode:
 
 ```text
 Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + MOSS-TTS-Nano
@@ -408,7 +433,7 @@ SeamlessStreaming / SeamlessM4T v2
 Estimated installed size: roughly 10 GB+
 ```
 
-This is useful for experiments, but it is not the default product path.
+This is useful for experiments, but it is not the default path.
 
 ## Experiment Tracking
 
@@ -494,7 +519,7 @@ Useful advanced metrics:
 
 5. `HeptapodSileroVADAdapter`
    - Status: ready in `HeptapodSpeechSwiftAdapters`.
-   - Adds real local speech/silence gating for the starter pipeline.
+   - Adds real local speech/silence gating for the compact pipeline.
    - Keep file-based smoke tests runnable without VAD.
 
 6. `Qwen3TTSAdapter`
@@ -517,24 +542,11 @@ Useful advanced metrics:
    - Prototype a direct S2ST worker around SeamlessStreaming.
    - Keep as research-only until packaging, licensing, and Apple-hardware latency are proven.
 
-## Heptapod Integration Plan
-
-1. Keep HeptapodLocalSpeechEngine as a standalone Swift package.
-2. Add it to Heptapod through Swift Package Manager.
-3. Build a Local Engine settings page:
-   - ASR model picker,
-   - translation model picker,
-   - TTS model picker,
-   - estimated installed size,
-   - cache status,
-   - quality/latency labels.
-4. Add a `Local Voice Translation` mode next to cloud realtime translation.
-5. Store local model choices in app preferences.
-6. Store benchmark summaries locally for diagnostics.
-
 ## Engineering Notes
 
-The first implementation should be segment-based. That means speech is processed in small chunks, then translated and synthesized. This is more stable than fake word-by-word streaming.
+The current implementation is segment-based: speech is processed in short chunks,
+then translated and synthesized. This is more stable than emitting unstable
+word-by-word translations.
 
 True realtime local speech translation needs:
 
@@ -544,15 +556,15 @@ True realtime local speech translation needs:
 - audio queue scheduling,
 - rollback/rewrite logic for partial transcripts.
 
-That can be added later, but the first version should prioritize correctness and stability.
+These can be added incrementally while preserving the existing pipeline contracts.
 
-## Integration Plan
+## Integration Roadmap
 
-1. Keep this package independent from Heptapod UI.
-2. Add microphone, system-audio, and audio-queue edges for live local mode.
-3. Add richer model download/cache status reporting per adapter.
-4. Add a Heptapod settings screen for local engine model selection.
-5. Add benchmark logging: latency, disk size, memory pressure, and translation quality notes.
+1. Keep the package independent from any host application UI.
+2. Add richer model download and cache-status reporting per adapter.
+3. Expose reusable permission and background-audio integration APIs.
+4. Add host-app model selection for latency, quality, and installed size.
+5. Expand benchmark logging for latency, memory pressure, and translation quality.
 
 ## Current State
 
@@ -572,5 +584,5 @@ This package currently contains:
 
 It runs file-based local inference through the speech-swift adapter target and
 has microphone-backed and system-audio-backed live demo paths. The remaining
-production gap is app integration polish: permissions UX, background audio
-behavior, user-facing model cache status, and production playback scheduling.
+work is app-integration polish: permissions UX, background audio behavior,
+user-facing model cache status, and hardened playback scheduling.
