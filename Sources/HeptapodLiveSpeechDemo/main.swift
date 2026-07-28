@@ -31,16 +31,22 @@ struct HeptapodLiveSpeechDemo {
                 throw DemoError.liveAudioRequiresRealMode
             }
 
+            let sourceLanguageCode = options.sourceLanguageCode ?? "en"
             let targetLanguageCode = options.targetLanguageCode ?? "tr"
             let pipeline = try makePipeline(options: options)
 
             try await pipeline.prepare(includeSynthesis: options.usesTextOnly == false)
-            printHeader(options: options, targetLanguageCode: targetLanguageCode)
+            printHeader(
+                options: options,
+                sourceLanguageCode: sourceLanguageCode,
+                targetLanguageCode: targetLanguageCode
+            )
 
             if let audioPath = options.audioPath {
                 try await runAudioFileDemo(
                     pipeline: pipeline,
                     audioPath: audioPath,
+                    sourceLanguageCode: sourceLanguageCode,
                     targetLanguageCode: targetLanguageCode,
                     shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
                     outputDirectory: options.usesTextOnly ? nil : options.outputDirectory,
@@ -54,6 +60,7 @@ struct HeptapodLiveSpeechDemo {
             } else if options.usesMicrophone {
                 try await runMicrophoneDemo(
                     pipeline: pipeline,
+                    sourceLanguageCode: sourceLanguageCode,
                     targetLanguageCode: targetLanguageCode,
                     durationSeconds: options.durationSeconds,
                     shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
@@ -67,6 +74,7 @@ struct HeptapodLiveSpeechDemo {
             } else if options.usesSystemAudio {
                 try await runSystemAudioDemo(
                     pipeline: pipeline,
+                    sourceLanguageCode: sourceLanguageCode,
                     targetLanguageCode: targetLanguageCode,
                     durationSeconds: options.durationSeconds,
                     shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
@@ -80,12 +88,14 @@ struct HeptapodLiveSpeechDemo {
             } else if options.isInteractive {
                 try await runInteractiveDemo(
                     pipeline: pipeline,
+                    sourceLanguageCode: sourceLanguageCode,
                     targetLanguageCode: targetLanguageCode,
                     shouldSpeak: options.shouldSpeak
                 )
             } else {
                 try await runScriptedDemo(
                     pipeline: pipeline,
+                    sourceLanguageCode: sourceLanguageCode,
                     targetLanguageCode: targetLanguageCode,
                     shouldSpeak: options.shouldSpeak
                 )
@@ -125,16 +135,21 @@ struct HeptapodLiveSpeechDemo {
         )
     }
 
-    private static func printHeader(options: DemoOptions, targetLanguageCode: String) {
+    private static func printHeader(
+        options: DemoOptions,
+        sourceLanguageCode: String,
+        targetLanguageCode: String
+    ) {
         print("""
         Heptapod Live Speech Demo
 
         Mode: \(options.usesRealModels ? "real speech-swift adapters" : "preview adapters")
         ASR:  \(options.asrPreset.descriptor.displayName)
-        MT:   \(HeptapodModelDescriptor.madladTranslator.displayName)
+        MT:   \(options.mtDescriptor.displayName)
         TTS:  \(options.usesTextOnly ? "off" : options.ttsDescriptor.displayName)
         Flow: \(options.usesTextOnly ? "audio chunk source -> live session -> VAD -> ASR -> MT" : "audio chunk source -> live session -> VAD -> ASR -> MT -> TTS -> playback sink")
         Source: \(options.sourceDescription)
+        Source language: \(sourceLanguageCode)
         Target: \(targetLanguageCode)
         Speak: \(options.usesTextOnly ? "off" : (options.shouldSpeak || options.shouldPlayOutput ? "on" : "off"))
         Translation timing: \(options.usesSentenceBuffering ? "sentence/pause buffered" : "every chunk")
@@ -165,8 +180,11 @@ struct HeptapodLiveSpeechDemo {
           --microphone        Capture live microphone audio chunks.
           --system-audio      Capture macOS system audio with ScreenCaptureKit.
           --duration <sec>    Stop live/file audio after this many seconds.
+          --from <code>       Source language. Default: en.
           --to <code>         Target language. Default: tr.
           --asr <name>        Real mode ASR backend: compact or quality. Default: compact.
+          --mt <name>         Real mode translation: madlad or apple. Default: madlad.
+                              Apple uses installed system language assets on macOS 26+.
           --latency <preset>  Live timing preset: low, balanced, or quality. Default: balanced.
           --chunk-duration <sec>
                               Audio chunk size for live/file demos. Lower is faster but less stable.
@@ -214,6 +232,7 @@ struct HeptapodLiveSpeechDemo {
 
     private static func runScriptedDemo(
         pipeline: HeptapodSpeechToSpeechPipeline,
+        sourceLanguageCode: String,
         targetLanguageCode: String,
         shouldSpeak: Bool
     ) async throws {
@@ -226,6 +245,7 @@ struct HeptapodLiveSpeechDemo {
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
             shouldSpeak: shouldSpeak
         )
@@ -235,6 +255,7 @@ struct HeptapodLiveSpeechDemo {
 
     private static func runInteractiveDemo(
         pipeline: HeptapodSpeechToSpeechPipeline,
+        sourceLanguageCode: String,
         targetLanguageCode: String,
         shouldSpeak: Bool
     ) async throws {
@@ -243,6 +264,7 @@ struct HeptapodLiveSpeechDemo {
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
             shouldSpeak: shouldSpeak
         )
@@ -250,6 +272,7 @@ struct HeptapodLiveSpeechDemo {
 
     private static func runMicrophoneDemo(
         pipeline: HeptapodSpeechToSpeechPipeline,
+        sourceLanguageCode: String,
         targetLanguageCode: String,
         durationSeconds: Double?,
         shouldPlayOutput: Bool,
@@ -269,6 +292,7 @@ struct HeptapodLiveSpeechDemo {
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
             endpointing: endpointing,
@@ -282,6 +306,7 @@ struct HeptapodLiveSpeechDemo {
 
     private static func runSystemAudioDemo(
         pipeline: HeptapodSpeechToSpeechPipeline,
+        sourceLanguageCode: String,
         targetLanguageCode: String,
         durationSeconds: Double?,
         shouldPlayOutput: Bool,
@@ -307,6 +332,7 @@ struct HeptapodLiveSpeechDemo {
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
             endpointing: endpointing,
@@ -324,6 +350,7 @@ struct HeptapodLiveSpeechDemo {
     private static func runAudioFileDemo(
         pipeline: HeptapodSpeechToSpeechPipeline,
         audioPath: String,
+        sourceLanguageCode: String,
         targetLanguageCode: String,
         shouldPlayOutput: Bool,
         outputDirectory: String?,
@@ -344,6 +371,7 @@ struct HeptapodLiveSpeechDemo {
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
             playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
             endpointing: endpointing,
@@ -395,6 +423,7 @@ struct HeptapodLiveSpeechDemo {
     private static func runLiveSession(
         pipeline: HeptapodSpeechToSpeechPipeline,
         chunks: AsyncThrowingStream<HeptapodAudioChunk, Error>,
+        sourceLanguageCode: String,
         targetLanguageCode: String,
         playbackSink: (any HeptapodSpeechPlaybackSink)? = nil,
         endpointing: HeptapodSentenceEndpointingConfiguration = HeptapodSentenceEndpointingConfiguration(),
@@ -405,7 +434,7 @@ struct HeptapodLiveSpeechDemo {
     ) async throws {
         let session = HeptapodLiveSpeechSession(
             pipeline: pipeline,
-            sourceLanguageCode: "en",
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
             playbackSink: playbackSink,
             outputMode: outputMode
@@ -421,6 +450,7 @@ struct HeptapodLiveSpeechDemo {
         let trace = try tracePath.map { try LiveTraceRecorder(path: $0) }
         try trace?.record(
             event: "run_started",
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
             usesSentenceBuffering: usesSentenceBuffering
         )
@@ -571,6 +601,8 @@ private struct DemoOptions {
     let usesPunctuationEndpoint: Bool
     let usesASRStabilization: Bool
     let asrPreset: DemoASRPreset
+    let mtBackend: DemoMTBackend
+    let sourceLanguageCode: String?
     let targetLanguageCode: String?
     let ttsBackend: DemoTTSBackend
     let ttsScriptPath: String?
@@ -600,6 +632,8 @@ private struct DemoOptions {
         var usesPunctuationEndpoint = false
         var usesASRStabilization: Bool?
         var asrPreset = DemoASRPreset.compact
+        var mtBackend = DemoMTBackend.madlad
+        var sourceLanguageCode: String?
         var targetLanguageCode: String?
         var ttsBackend: DemoTTSBackend?
         var ttsScriptPath: String?
@@ -662,6 +696,8 @@ private struct DemoOptions {
                 usesASRStabilization = true
             case "--no-asr-stabilization":
                 usesASRStabilization = false
+            case "--from":
+                sourceLanguageCode = try Self.value(after: argument, in: arguments, at: &index)
             case "--to":
                 targetLanguageCode = try Self.value(after: argument, in: arguments, at: &index)
             case "--asr":
@@ -670,6 +706,12 @@ private struct DemoOptions {
                     throw DemoError.invalidASRPreset(rawValue)
                 }
                 asrPreset = preset
+            case "--mt":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let backend = DemoMTBackend(rawValue: rawValue.lowercased()) else {
+                    throw DemoError.invalidMTBackend(rawValue)
+                }
+                mtBackend = backend
             case "--tts":
                 let rawValue = try Self.value(after: argument, in: arguments, at: &index)
                 guard let backend = DemoTTSBackend(rawValue: rawValue.lowercased()) else {
@@ -724,6 +766,8 @@ private struct DemoOptions {
         self.usesPunctuationEndpoint = usesPunctuationEndpoint || latencyPreset.usesPunctuationEndpoint
         self.usesASRStabilization = usesASRStabilization ?? (usesTextOnly ? false : latencyPreset.usesASRStabilization)
         self.asrPreset = asrPreset
+        self.mtBackend = mtBackend
+        self.sourceLanguageCode = sourceLanguageCode
         self.targetLanguageCode = targetLanguageCode
         let resolvedTTSBackend = ttsBackend ?? Self.defaultTTSBackend(
             targetLanguageCode: targetLanguageCode ?? "tr"
@@ -798,7 +842,7 @@ private struct DemoOptions {
     var pipelineConfiguration: HeptapodPipelineConfiguration {
         HeptapodPipelineConfiguration(
             speechRecognitionModelID: asrPreset.descriptor.id,
-            textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+            textTranslationModelID: mtDescriptor.id,
             speechSynthesisModelID: ttsDescriptor.id,
             voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
         )
@@ -835,6 +879,20 @@ private struct DemoOptions {
             HeptapodModelDescriptor.chatterboxTTS
         }
     }
+
+    var mtDescriptor: HeptapodModelDescriptor {
+        switch mtBackend {
+        case .madlad:
+            HeptapodModelDescriptor.madladTranslator
+        case .apple:
+            HeptapodModelDescriptor.appleTranslation
+        }
+    }
+}
+
+private enum DemoMTBackend: String {
+    case madlad
+    case apple
 }
 
 private enum DemoTTSBackend: String {
@@ -939,7 +997,11 @@ private enum DemoLatencyPreset: String {
                 minimumStableWords: 3
             )
         case .quality:
-            .disabled
+            HeptapodASRStabilizationConfiguration(
+                isEnabled: true,
+                maximumWindowChunks: 6,
+                minimumStableWords: 4
+            )
         }
     }
 }
@@ -968,6 +1030,7 @@ private final class LiveTraceRecorder {
     func record(
         event: String,
         index: Int? = nil,
+        sourceLanguageCode: String? = nil,
         targetLanguageCode: String? = nil,
         usesSentenceBuffering: Bool? = nil,
         transcriptText: String? = nil,
@@ -988,6 +1051,7 @@ private final class LiveTraceRecorder {
             timestamp: dateFormatter.string(from: now),
             elapsedSeconds: now.timeIntervalSince(startedAt),
             index: index,
+            sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
             usesSentenceBuffering: usesSentenceBuffering,
             transcriptText: transcriptText,
@@ -1014,6 +1078,7 @@ private struct LiveTraceEvent: Encodable {
     let timestamp: String
     let elapsedSeconds: TimeInterval
     let index: Int?
+    let sourceLanguageCode: String?
     let targetLanguageCode: String?
     let usesSentenceBuffering: Bool?
     let transcriptText: String?
@@ -1136,6 +1201,7 @@ private enum DemoError: LocalizedError {
     case invalidASRPreset(String)
     case invalidDuration(String)
     case invalidLatencyPreset(String)
+    case invalidMTBackend(String)
     case invalidPositiveOption(String, String)
     case invalidTTSBackend(String)
     case invalidTTSDevice(String)
@@ -1159,6 +1225,8 @@ private enum DemoError: LocalizedError {
             "Invalid duration: \(value)."
         case .invalidLatencyPreset(let value):
             "Invalid latency preset: \(value). Use low, balanced, or quality."
+        case .invalidMTBackend(let value):
+            "Invalid translation backend: \(value). Use madlad or apple."
         case .invalidPositiveOption(let option, let value):
             "Invalid value for \(option): \(value)."
         case .invalidTTSBackend(let value):

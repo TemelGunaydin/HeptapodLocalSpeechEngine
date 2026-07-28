@@ -89,10 +89,13 @@ The UI owns:
 
 Adapters conform to protocols in `Core/EngineProtocols.swift`. The app should depend on protocols and descriptors, not concrete model packages.
 
-This keeps the product free to move from Qwen to WhisperKit, from MADLAD to NLLB, or from Kokoro to Qwen3-TTS without rewriting the Heptapod feature surface.
+This keeps the product free to move from Qwen to WhisperKit, from MADLAD to
+Apple Translation or another MT runtime, and from MOSS to Chatterbox without
+rewriting the Heptapod feature surface.
 
 `HeptapodSpeechSwiftAdapters` is the first concrete adapter target. It keeps
 `speech-swift` and AVFoundation dependencies out of the model-agnostic core
-package while making Silero VAD, Qwen3-ASR, MADLAD-400, streaming MOSS-TTS-Nano,
-Chatterbox MLX/PyTorch TTS, native macOS speech, Kokoro, microphone capture,
-system-audio capture, and playback usable through the core engine protocols.
+package while making Silero VAD, Qwen3-ASR, MADLAD-400, Apple Translation,
+streaming MOSS-TTS-Nano, Chatterbox MLX/PyTorch TTS, native macOS speech,
+Kokoro, microphone capture, system-audio capture, and playback usable through
+the core engine protocols.

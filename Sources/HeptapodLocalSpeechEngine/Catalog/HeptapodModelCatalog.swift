@@ -31,6 +31,7 @@ public struct HeptapodModelCatalog: Sendable {
         .parakeetStreaming,
         .nemotronStreamingASR,
         .madladTranslator,
+        .appleTranslation,
         .nllbDistilledTranslator,
         .seamlessTextTranslator,
         .qwenTTSCompact,
@@ -251,6 +252,30 @@ public extension HeptapodModelDescriptor {
         tradeoffs: "Quality may lag cloud translation for idioms, domain terms, and low-resource language pairs."
     )
 
+    static let appleTranslation = HeptapodModelDescriptor(
+        id: "mt.apple.translation.on_device",
+        stage: .textTranslation,
+        displayName: "Apple On-Device Translation",
+        provider: "Apple",
+        family: "Translation",
+        backend: .custom,
+        capabilities: [.textTranslation],
+        qualityTier: .highQuality,
+        latencyTier: .realtime,
+        status: .adapterRequired,
+        footprint: HeptapodModelFootprint(
+            downloadSize: HeptapodByteSize(0),
+            installedSize: HeptapodByteSize(0),
+            recommendedMemory: .megabytes(512)
+        ),
+        languageCoverage: HeptapodLanguageCoverage(
+            notes: "Language coverage and asset downloads are managed by the operating system."
+        ),
+        summary: "Fast on-device translation using language assets installed by macOS or iOS.",
+        tradeoffs: "The CLI adapter requires macOS 26.0 or iOS 26.0 and a preinstalled source/target language pair. Terminology still depends on sentence context.",
+        licenseNote: "Provided by the operating system; no model weights are redistributed by this package."
+    )
+
     static let nllbDistilledTranslator = HeptapodModelDescriptor(
         id: "mt.nllb.distilled.600m",
         stage: .textTranslation,
@@ -268,8 +293,9 @@ public extension HeptapodModelDescriptor {
             recommendedMemory: .gigabytes(6)
         ),
         languageCoverage: HeptapodLanguageCoverage(notes: "Strong multilingual translation candidate if converted to an Apple-friendly runtime."),
-        summary: "Potential quality upgrade for text translation.",
-        tradeoffs: "Requires conversion/runtime work; not a native Swift adapter yet."
+        summary: "Research comparison candidate for text translation.",
+        tradeoffs: "Requires conversion/runtime work and the reference checkpoint's non-commercial license prevents using it as the product default.",
+        licenseNote: "CC-BY-NC-4.0 for the reference NLLB-200 distilled checkpoint; research and non-commercial use only."
     )
 
     static let seamlessTextTranslator = HeptapodModelDescriptor(

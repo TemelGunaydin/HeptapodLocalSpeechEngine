@@ -54,6 +54,8 @@ text-only benchmark runs.
 Use `--punctuation-endpoint` to flush complete ASR sentences before the maximum
 buffer limit. Add `--speech-output --tts moss --play-output` to benchmark the
 streaming local speech path. Use `--tts chatterbox-mlx` for the quality mode.
+Use `--mt apple` to benchmark installed Apple Translation assets or
+`--mt madlad` for the model-backed translator.
 The summary reports TTS first-audio latency separately from full output latency.
 The runner also prepares `mlx.metallib` after SwiftPM build so MLX can load its
 Metal kernels at runtime.

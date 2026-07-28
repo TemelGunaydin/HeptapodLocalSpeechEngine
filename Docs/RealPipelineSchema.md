@@ -36,6 +36,7 @@ flowchart LR
 | VAD | Silero VAD v5 | CoreML | `aufklarer/Silero-VAD-v5-CoreML` | Gates silent input before ASR. |
 | ASR | Qwen3-ASR 0.6B 4-bit | MLX Swift | `aufklarer/Qwen3-ASR-0.6B-MLX-4bit` | Real cached ASR inference is fast enough for segment-based live testing. |
 | Translation | MADLAD-400 3B int4 | MLX Swift | `aufklarer/MADLAD400-3B-MT-MLX` | Broad multilingual text translation; large first download. |
+| Translation alternative | Apple Translation | System framework | `mt.apple.translation.on_device` | On-device quality/latency mode on macOS 26+; requires installed language assets. |
 | TTS | Kokoro 82M | CoreML path via `speech-swift` | `aufklarer/Kokoro-82M-CoreML` | Good small smoke-test TTS. Turkish phonemizer is not currently supported. |
 | Report | `DemoReport` JSON | Foundation | `/tmp/heptapod-real-report.json` | Stores timings, text outputs, audio durations, models, and file paths. |
 

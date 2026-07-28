@@ -21,6 +21,7 @@ func catalogProvidesAlternativesForEachPipelineStage() {
 
     #expect(catalog.models(for: .speechRecognition).count >= 3)
     #expect(catalog.models(for: .textTranslation).count >= 2)
+    #expect(catalog.models(for: .textTranslation).map(\.id).contains(HeptapodModelDescriptor.appleTranslation.id))
     #expect(catalog.models(for: .speechSynthesis).count >= 2)
     #expect(catalog.models(for: .speechSynthesis).map(\.id).contains(HeptapodModelDescriptor.mossTTSNano.id))
     #expect(catalog.models(for: .speechSynthesis).map(\.id).contains(HeptapodModelDescriptor.chatterboxMLXTTS.id))
@@ -28,6 +29,37 @@ func catalogProvidesAlternativesForEachPipelineStage() {
     #expect(catalog.models(for: .directSpeechToSpeech).isEmpty == false)
     #expect(catalog.models(for: .directSpeechToSpeech).map(\.id).contains(HeptapodModelDescriptor.seamlessStreamingDirectSpeech.id))
 }
+
+#if canImport(Translation)
+@Test
+func speechSwiftFactoryReportsAppleTranslationPipelineRunnable() throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.appleTranslation.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.mossTTSNano.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
+
+    #expect(readiness.canRunInference)
+    #expect(readiness.unavailableDescriptors.isEmpty)
+    #expect(readiness.selectedDescriptors.map(\.id).contains(HeptapodModelDescriptor.appleTranslation.id))
+    _ = try HeptapodSpeechSwiftAdapterFactory.makePipeline(configuration: configuration)
+}
+
+@Test
+func appleTranslationAdapterRequiresSourceLanguage() async {
+    let adapter = HeptapodAppleTranslationAdapter()
+
+    await #expect(throws: HeptapodAppleTranslationError.sourceLanguageRequired) {
+        try await adapter.translate(
+            "Hello",
+            sourceLanguageCode: nil,
+            targetLanguageCode: "tr"
+        )
+    }
+}
+#endif
 
 @Test
 func seamlessStreamingResearchPipelineIsCataloguedButNotRunnable() throws {
@@ -630,6 +662,66 @@ func textOnlyBufferedTranslationNormalizesFragmentedTranscript() async throws {
     ])
     #expect(translations == [
         "People keep asking. My first tip is just to listen."
+    ])
+}
+
+@Test
+func textOnlyBufferedTranslationPreservesIndependentSentenceStarts() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        outputMode: .textOnly
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(
+                pcm16: Data("Today we are testing live translation.".utf8),
+                sampleRate: 16_000
+            ),
+            HeptapodAudioChunk(
+                pcm16: Data("The translated voice should sound natural.".utf8),
+                sampleRate: 16_000
+            ),
+            HeptapodAudioChunk(
+                pcm16: Data("It should preserve sentence boundaries.".utf8),
+                sampleRate: 16_000
+            ),
+            HeptapodAudioChunk(
+                pcm16: Data("The book is much.".utf8),
+                sampleRate: 16_000
+            ),
+            HeptapodAudioChunk(
+                pcm16: Data("better than I expected.".utf8),
+                sampleRate: 16_000
+            )
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(maximumBufferedSegments: 5)
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var translations: [String] = []
+    for try await event in events {
+        if case .translation(_, let result) = event {
+            translations.append(result.translation.translatedText)
+        }
+    }
+
+    #expect(translations == [
+        "Today we are testing live translation. The translated voice should sound natural. It should preserve sentence boundaries. The book is much better than I expected."
     ])
 }
 

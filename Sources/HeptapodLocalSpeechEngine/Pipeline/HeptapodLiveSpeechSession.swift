@@ -626,6 +626,10 @@ private struct TranscriptTranslationNormalizer {
         if shouldJoinDuplicateBoundary(fragment, with: next) {
             return true
         }
+        if fragment.punctuation == ".",
+           next.text.first?.isLowercase == true {
+            return true
+        }
         if let first = firstWord(in: next.text),
            leadingContinuationWords.contains(first) {
             return true
@@ -806,12 +810,12 @@ private struct TranscriptTranslationNormalizer {
 
     private static let leadingContinuationWords: Set<String> = [
         "about", "and", "are", "as", "at", "for", "from", "if", "in", "is",
-        "it", "of", "on", "or", "that", "the", "to", "with", "without"
+        "of", "on", "or", "that", "to", "with", "without"
     ]
 
     private static let retainedLeadingContinuationWords: Set<String> = [
         "about", "and", "are", "as", "at", "for", "from", "if", "in", "is",
-        "it", "of", "on", "or", "that", "the", "to", "with", "without"
+        "of", "on", "or", "that", "to", "with", "without"
     ]
 
     private static let continuationPhrases: [[String]] = [

@@ -400,7 +400,9 @@ def benchmark_command(
     *,
     audio_path: Path | None,
     uses_system_audio: bool,
+    source_language: str,
     target_language: str,
+    mt_backend: str,
     duration_seconds: float,
     trace_path: Path,
     uses_asr_stabilization: bool,
@@ -424,8 +426,12 @@ def benchmark_command(
         command.extend(["--audio", str(audio_path)])
     command.extend(
         [
+            "--from",
+            source_language,
             "--to",
             target_language,
+            "--mt",
+            mt_backend,
             "--asr",
             case.asr,
             "--latency",
@@ -491,7 +497,9 @@ def make_report(
     playback_delay_seconds: float,
     playback_browser: str | None,
     playback_browser_profile_dir: Path | None,
+    source_language: str,
     target_language: str,
+    mt_backend: str,
     duration_seconds: float,
     cases: list[BenchmarkCase],
     results: list[RunResult],
@@ -544,7 +552,9 @@ def make_report(
         f"Date: {datetime.now().isoformat(timespec='seconds')}",
         f"Commit: {git_commit()}",
         f"Source: `{source_description(audio_path, uses_system_audio)}`",
+        f"Source language: `{source_language}`",
         f"Target language: `{target_language}`",
+        f"Translation: `{mt_backend}`",
         f"Output mode: `{'speech' if uses_speech_output else 'text'}`",
         f"Duration: `{format_number(duration_seconds)}s`",
         f"Output directory: `{output_dir}`",
@@ -628,7 +638,9 @@ def make_report(
                         result.case,
                         audio_path=audio_path,
                         uses_system_audio=uses_system_audio,
+                        source_language=source_language,
                         target_language=target_language,
+                        mt_backend=mt_backend,
                         duration_seconds=duration_seconds,
                         trace_path=result.trace_path,
                         uses_asr_stabilization=uses_asr_stabilization,
@@ -775,7 +787,14 @@ def main() -> int:
         default=3.0,
         help="Seconds to wait before starting --playback-audio after capture begins.",
     )
+    parser.add_argument("--from", dest="source_language", default="en", help="Source language code.")
     parser.add_argument("--to", default="tr", help="Target language code.")
+    parser.add_argument(
+        "--mt",
+        choices=["madlad", "apple"],
+        default="madlad",
+        help="Translation backend. Apple requires installed system language assets.",
+    )
     parser.add_argument("--duration", type=float, default=60.0, help="Seconds to process.")
     parser.add_argument(
         "--output-dir",
@@ -961,7 +980,9 @@ def main() -> int:
             case,
             audio_path=audio_path,
             uses_system_audio=args.system_audio,
+            source_language=args.source_language,
             target_language=args.to,
+            mt_backend=args.mt,
             duration_seconds=args.duration,
             trace_path=trace_path,
             uses_asr_stabilization=args.asr_stabilization,
@@ -1007,7 +1028,9 @@ def main() -> int:
         playback_delay_seconds=args.playback_delay,
         playback_browser=args.playback_browser,
         playback_browser_profile_dir=playback_browser_profile_dir,
+        source_language=args.source_language,
         target_language=args.to,
+        mt_backend=args.mt,
         duration_seconds=args.duration,
         cases=cases,
         results=results,

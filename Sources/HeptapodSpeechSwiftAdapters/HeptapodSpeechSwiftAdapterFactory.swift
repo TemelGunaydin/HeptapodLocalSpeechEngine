@@ -16,6 +16,11 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         #if os(macOS)
         modelIDs.insert(HeptapodModelDescriptor.macOSSystemTTS.id)
         #endif
+        #if canImport(Translation)
+        if #available(macOS 26.0, iOS 26.0, *) {
+            modelIDs.insert(HeptapodModelDescriptor.appleTranslation.id)
+        }
+        #endif
         return modelIDs
     }()
 
@@ -73,7 +78,11 @@ public enum HeptapodSpeechSwiftAdapterFactory {
                 modelID: asrModelID,
                 offlineMode: offlineMode
             ),
-            translator: HeptapodMADLADTranslatorAdapter(modelID: translationModelID, offlineMode: offlineMode),
+            translator: makeTranslator(
+                for: configuration.textTranslationModelID,
+                madladModelID: translationModelID,
+                offlineMode: offlineMode
+            ),
             synthesizer: makeSynthesizer(
                 for: configuration.speechSynthesisModelID,
                 kokoroModelID: ttsModelID,
@@ -167,6 +176,24 @@ public enum HeptapodSpeechSwiftAdapterFactory {
             )
         default:
             HeptapodKokoroTTSAdapter(modelID: kokoroModelID, offlineMode: offlineMode)
+        }
+    }
+
+    private static func makeTranslator(
+        for modelID: String,
+        madladModelID: String,
+        offlineMode: Bool
+    ) -> any HeptapodTextTranslator {
+        switch modelID {
+        #if canImport(Translation)
+        case HeptapodModelDescriptor.appleTranslation.id:
+            HeptapodAppleTranslationAdapter()
+        #endif
+        default:
+            HeptapodMADLADTranslatorAdapter(
+                modelID: madladModelID,
+                offlineMode: offlineMode
+            )
         }
     }
 }

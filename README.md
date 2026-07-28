@@ -88,6 +88,7 @@ HeptapodLocalSpeechEngine/
       HeptapodSileroVADAdapter.swift
       HeptapodQwen3ASRAdapter.swift
       HeptapodMADLADTranslatorAdapter.swift
+      HeptapodAppleTranslationAdapter.swift
       HeptapodKokoroTTSAdapter.swift
       HeptapodChatterboxTTSAdapter.swift
       HeptapodMossTTSNanoAdapter.swift
@@ -186,10 +187,26 @@ Tools/run_live_translation.sh
 ```
 
 This defaults to English source audio, Turkish output, compact Qwen ASR, the
-balanced `1.0s / 4 segment` endpointing profile, and streaming MOSS-TTS-Nano.
+balanced `1.0s / 4 segment` endpointing profile, MADLAD translation, and
+streaming MOSS-TTS-Nano.
 The pipeline is fully local after model weights are cached. It does not use a
 WebSocket or remote server; optional Python models run as local persistent child
 processes over JSON-lines pipes.
+
+On macOS 26 or newer, use Apple's installed on-device translation assets for
+faster and more natural EN-to-TR text translation:
+
+```bash
+Tools/run_live_translation.sh \
+  --from en \
+  --to tr \
+  --mt apple
+```
+
+The source/target language pair must already be installed in the system
+Translation settings. This path uses the
+[Apple Translation framework](https://developer.apple.com/documentation/translation)
+and does not download or load MADLAD weights.
 
 The launcher intentionally uses `xcrun swift`, so the Swift compiler and macOS
 SDK come from the same active Xcode toolchain. A bare `swift` command may resolve
@@ -229,6 +246,16 @@ xcrun swift run HeptapodLiveSpeechDemo -- \
 chunks, stable-prefix ASR, terminal-punctuation endpoints, and a four-segment
 safety flush. The `low` preset uses 0.75 second chunks and a single buffered
 segment; it starts sooner but often splits a sentence into unnatural phrases.
+
+For better sentence context at the cost of waiting longer before the first
+translation, use:
+
+```bash
+Tools/run_live_translation.sh \
+  --mt apple \
+  --latency quality \
+  --asr-stabilization
+```
 
 Translation/TTS and playback are queued like a small backbuffer. Once a sentence
 or stable phrase is flushed, the live input loop submits it to a serial synthesis
@@ -329,7 +356,7 @@ HF_DOWNLOAD_STALL_TIMEOUT=600 xcrun swift run HeptapodRealSpeechDemo -- \
 The file input path can point to WAV, M4A, MP3, or CAF audio that AVFoundation
 can decode locally.
 
-The real demo uses Qwen3-ASR and MADLAD-400 through the
+The real demo uses Qwen3-ASR and either MADLAD-400 or Apple Translation through the
 `HeptapodSpeechSwiftAdapters` target, which wraps `speech-swift`. The live demo
 adds MOSS streaming, Chatterbox MLX quality output, native macOS voices, Kokoro,
 and the older PyTorch Chatterbox bridge.
@@ -366,7 +393,8 @@ ASR alternatives:
 Text translation alternatives:
 
 - MADLAD-400 3B: practical first local multilingual translator, about 2.8 GB installed.
-- NLLB Distilled 600M: possible quality/size alternative after runtime conversion.
+- Apple Translation: fast on-device quality mode on macOS 26+ using installed system language assets.
+- NLLB Distilled 600M: research-only comparison candidate; the reference checkpoint is non-commercial.
 - SeamlessM4T text path: research-grade option, heavier packaging.
 
 TTS alternatives:
@@ -398,7 +426,8 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 | ASR | Parakeet Streaming | CoreML | Planned | ~340 MB | True partial ASR | Language coverage depends on variant |
 | ASR | Nemotron 3.5 ASR Streaming 0.6B | MLX/Python | Planned | ~1.5 GB | True cache-aware streaming ASR | Needs mlx-audio bridge; not Swift-native yet |
 | MT | MADLAD-400 3B | MLX Swift | Adapter target ready | ~2.8 GB | First local translation | Quality varies by language pair |
-| MT | NLLB Distilled 600M | Custom/converted | Planned | ~1.6 GB | Better translation candidate | Runtime conversion needed |
+| MT | Apple Translation | System framework | Adapter target ready | System-managed | Fast, natural on-device translation | macOS 26+ and installed language pair |
+| MT | NLLB Distilled 600M | Custom/converted | Research | ~1.6 GB | Translation comparison | Non-commercial reference license |
 | MT | SeamlessM4T text path | Seamless | Research | ~4.8 GB | Unified research path | Heavy packaging |
 | TTS | MOSS-TTS-Nano 100M | ONNX Runtime/CPU | Adapter target ready | ~1.5 GB | Streaming Turkish live default | Less expressive than quality mode |
 | TTS | Chatterbox MLX FP16 | MLX/Python | Adapter target ready | ~3.5 GB | Natural multilingual quality mode | Full segment before playback; Metal contention |
@@ -419,11 +448,11 @@ Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + MOSS-TTS-Nano
 Estimated downloaded model size: roughly 4.3 GB
 ```
 
-Higher-quality local mode:
+EN-to-TR quality mode on macOS 26+:
 
 ```text
-Silero VAD + Qwen3 ASR 1.7B + NLLB Distilled + Qwen3 TTS
-Estimated installed size: roughly 6.4 GB
+Silero VAD + Qwen3 ASR 0.6B + Apple Translation + Chatterbox MLX
+Translation assets are managed by macOS.
 ```
 
 Research direct S2ST mode:
@@ -502,10 +531,10 @@ Useful advanced metrics:
    - Status: ready in `HeptapodSpeechSwiftAdapters`.
    - Runs segment-level Qwen3-ASR transcription through `speech-swift`.
 
-2. `HeptapodMADLADTranslatorAdapter`
+2. `HeptapodMADLADTranslatorAdapter` / `HeptapodAppleTranslationAdapter`
    - Status: ready in `HeptapodSpeechSwiftAdapters`.
    - Adds local text translation behind `HeptapodTextTranslator`.
-   - Measure quality by language pair.
+   - Apple Translation is the measured EN-to-TR quality/latency option on macOS 26+; MADLAD remains the portable model-backed fallback.
 
 3. `HeptapodKokoroTTSAdapter`
    - Status: ready in `HeptapodSpeechSwiftAdapters`.
@@ -579,7 +608,7 @@ This package currently contains:
 - Detailed pipeline results that expose transcript, translated text, and synthesized speech.
 - Unavailable placeholder adapters for not-yet-integrated models.
 - A placeholder adapter factory that can build the selected pipeline shape before real inference adapters exist.
-- `HeptapodSpeechSwiftAdapters`, which provides runnable Silero VAD, Qwen3-ASR, MADLAD-400, MOSS-TTS-Nano streaming, Chatterbox MLX/PyTorch, macOS System Voice, Kokoro, AVAudio microphone/playback, and ScreenCaptureKit system-audio adapters.
+- `HeptapodSpeechSwiftAdapters`, which provides runnable Silero VAD, Qwen3-ASR, MADLAD-400, Apple Translation, MOSS-TTS-Nano streaming, Chatterbox MLX/PyTorch, macOS System Voice, Kokoro, AVAudio microphone/playback, and ScreenCaptureKit system-audio adapters.
 - A real file-based speech-to-speech smoke test executable and recorded experiment result.
 
 It runs file-based local inference through the speech-swift adapter target and
