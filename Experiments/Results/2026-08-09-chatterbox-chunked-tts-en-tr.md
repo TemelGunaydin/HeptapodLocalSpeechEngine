@@ -79,6 +79,47 @@ processing reduced average output duration by 14.6% versus the untrimmed
 sentence pipeline, from 9.080 seconds to 7.750 seconds. Both measured aggregate
 WAVs began and ended at a zero PCM sample after the edge fade.
 
+## Early Sentence Endpoint Follow-up
+
+Commit `c48e6fa` changed the sentence buffer to release a completed,
+terminal-punctuation prefix while retaining any unfinished ASR tail. Terminal
+punctuation must remain stable across neighboring ASR hypotheses before it is
+committed. The quality latency profile now enables this endpoint with a six-word
+minimum; its eight-segment limit remains a fallback.
+
+The same fixture, command, model cache, and one-second chunks were used. The
+baseline waited until segment 10 and submitted all three source sentences as one
+translation. Both follow-up runs submitted the first sentence at segment 4, the
+second at segment 6, and the final sentence at segment 10. Transcript and
+translation text were unchanged.
+
+| Run | First transcript elapsed | First PCM elapsed | Run finished |
+| --- | ---: | ---: | ---: |
+| Warm + trim baseline | 9.206s | 11.345s | 14.316s |
+| Early endpoint 1 | 3.351s | 5.047s | 10.599s |
+| Early endpoint 2 | 3.367s | 5.100s | 10.783s |
+| Early endpoint average | 3.359s | 5.074s | 10.691s |
+
+The completed-sentence endpoint reduced time to the first transcript by 63.5%,
+time to first PCM by 55.3%, and total traced run time by 25.3%. The first PCM was
+available about 6.27 seconds earlier than in the prior quality-mode run.
+
+The expanded trace separates queue and model stages for every submitted
+sentence. Across the two follow-up runs and all six translated sentences:
+
+| Stage | Average |
+| --- | ---: |
+| Output queue wait | <0.001s |
+| Apple Translation | 0.158s |
+| Chatterbox first PCM | 1.521s |
+| Chatterbox full sentence | 1.521s |
+| Playback queue after first PCM | 0.0002s |
+| Peak output/playback backlog | 1 / 1 segment |
+
+This fixture does not create a queue backlog. Chatterbox synthesis is now the
+dominant post-ASR stage; translation and playback scheduling are not the current
+bottlenecks.
+
 ## Command
 
 ```bash
@@ -107,3 +148,6 @@ HeptapodLiveSpeechDemo \
   speaks this fixture about 14% longer than the old single-segment output, so a
   real speaker-playback listening test remains necessary before making it the
   default live mode.
+- Keep completed-sentence endpointing enabled for quality mode. It preserves the
+  source/translation text in this fixture while making the first translated
+  audio available during the source stream instead of after it ends.
