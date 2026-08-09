@@ -26,12 +26,15 @@ public actor HeptapodSpeechToSpeechPipeline {
         self.synthesizer = synthesizer
     }
 
-    public func prepare(includeSynthesis: Bool = true) async throws {
+    public func prepare(
+        includeSynthesis: Bool = true,
+        synthesisLanguageCode: String? = nil
+    ) async throws {
         try await vad?.prepare()
         try await recognizer.prepare()
         try await translator.prepare()
         if includeSynthesis {
-            try await synthesizer.prepare()
+            try await synthesizer.prepare(languageCode: synthesisLanguageCode)
         }
     }
 

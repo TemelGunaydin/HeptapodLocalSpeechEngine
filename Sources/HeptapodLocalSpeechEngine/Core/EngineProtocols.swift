@@ -24,6 +24,8 @@ public protocol HeptapodTextTranslator: HeptapodEngineComponent {
 }
 
 public protocol HeptapodSpeechSynthesizer: HeptapodEngineComponent {
+    func prepare(languageCode: String?) async throws
+
     func synthesize(
         _ text: String,
         languageCode: String,
@@ -38,6 +40,10 @@ public protocol HeptapodSpeechSynthesizer: HeptapodEngineComponent {
 }
 
 public extension HeptapodSpeechSynthesizer {
+    func prepare(languageCode: String?) async throws {
+        try await prepare()
+    }
+
     func synthesizeStream(
         _ text: String,
         languageCode: String,

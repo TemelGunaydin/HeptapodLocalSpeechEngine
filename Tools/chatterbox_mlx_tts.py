@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -46,6 +47,17 @@ def main() -> int:
     parser.add_argument("--exaggeration", type=float, default=0.1)
     parser.add_argument("--cfg-weight", type=float, default=0.5)
     parser.add_argument("--temperature", type=float, default=0.8)
+    parser.add_argument("--warmup", action="store_true", help="Warm the model before reporting ready.")
+    parser.add_argument(
+        "--trim-boundary-silence",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Trim excess leading and trailing silence from generated audio.",
+    )
+    parser.add_argument("--silence-threshold-db", type=float, default=-45.0)
+    parser.add_argument("--leading-silence-ms", type=float, default=40.0)
+    parser.add_argument("--trailing-silence-ms", type=float, default=120.0)
+    parser.add_argument("--boundary-fade-ms", type=float, default=8.0)
     args = parser.parse_args()
 
     if not args.server and (not args.text or not args.output):
@@ -70,6 +82,11 @@ def main() -> int:
         exaggeration=args.exaggeration,
         cfg_weight=args.cfg_weight,
         temperature=args.temperature,
+        trim_boundary_silence=args.trim_boundary_silence,
+        silence_threshold_db=args.silence_threshold_db,
+        leading_silence_ms=args.leading_silence_ms,
+        trailing_silence_ms=args.trailing_silence_ms,
+        boundary_fade_ms=args.boundary_fade_ms,
     )
     print(json.dumps({"model_load_seconds": load_seconds, **metrics}, separators=(",", ":")))
     return 0
@@ -92,6 +109,18 @@ def load_runtime(model_name: str):
 
 
 def run_server(args, *, runtime, model, load_seconds: float) -> int:
+    warmup_seconds = None
+    if args.warmup:
+        warmup_seconds = warm_up_model(
+            runtime=runtime,
+            model=model,
+            language=normalize_language_code(args.language),
+            voice_prompt=args.voice_prompt,
+            exaggeration=args.exaggeration,
+            cfg_weight=args.cfg_weight,
+            temperature=args.temperature,
+        )
+
     print(
         json.dumps(
             {
@@ -99,6 +128,7 @@ def run_server(args, *, runtime, model, load_seconds: float) -> int:
                 "backend": "chatterbox-mlx",
                 "sample_rate": int(model.sample_rate),
                 "model_load_seconds": load_seconds,
+                "warmup_seconds": warmup_seconds,
             },
             separators=(",", ":"),
         ),
@@ -122,6 +152,11 @@ def run_server(args, *, runtime, model, load_seconds: float) -> int:
                 exaggeration=args.exaggeration,
                 cfg_weight=args.cfg_weight,
                 temperature=args.temperature,
+                trim_boundary_silence=args.trim_boundary_silence,
+                silence_threshold_db=args.silence_threshold_db,
+                leading_silence_ms=args.leading_silence_ms,
+                trailing_silence_ms=args.trailing_silence_ms,
+                boundary_fade_ms=args.boundary_fade_ms,
             )
             print(
                 json.dumps(
@@ -158,6 +193,11 @@ def synthesize_to_wav(
     exaggeration: float,
     cfg_weight: float,
     temperature: float,
+    trim_boundary_silence: bool,
+    silence_threshold_db: float,
+    leading_silence_ms: float,
+    trailing_silence_ms: float,
+    boundary_fade_ms: float,
 ) -> dict[str, object]:
     normalized_text = str(text or "").strip()
     if not normalized_text:
@@ -167,10 +207,68 @@ def synthesize_to_wav(
         raise FileNotFoundError(f"voice prompt not found: {voice_prompt}")
 
     started_at = time.perf_counter()
+    audio, sample_rate = generate_audio(
+        runtime=runtime,
+        model=model,
+        text=normalized_text,
+        language=language,
+        voice_prompt=voice_prompt,
+        exaggeration=exaggeration,
+        cfg_weight=cfg_weight,
+        temperature=temperature,
+    )
+    raw_sample_count = int(audio.size)
+    trim_start = 0
+    trim_end = raw_sample_count
+    if trim_boundary_silence:
+        trim_start, trim_end = boundary_trim_range(
+            audio,
+            sample_rate,
+            threshold_db=silence_threshold_db,
+            leading_padding_ms=leading_silence_ms,
+            trailing_padding_ms=trailing_silence_ms,
+        )
+        audio = audio[trim_start:trim_end]
+    boundary_fade_sample_count = apply_boundary_fade(
+        audio,
+        sample_rate,
+        fade_ms=boundary_fade_ms,
+    )
+
+    output = output.expanduser()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    runtime["sf"].write(output, audio, sample_rate, subtype="PCM_16")
+
+    elapsed = time.perf_counter() - started_at
+    audio_seconds = float(audio.size) / sample_rate
+    raw_audio_seconds = float(raw_sample_count) / sample_rate
+    return {
+        "sample_rate": sample_rate,
+        "inference_seconds": elapsed,
+        "audio_seconds": audio_seconds,
+        "raw_audio_seconds": raw_audio_seconds,
+        "trimmed_leading_seconds": float(trim_start) / sample_rate,
+        "trimmed_trailing_seconds": float(raw_sample_count - trim_end) / sample_rate,
+        "boundary_fade_seconds": float(boundary_fade_sample_count) / sample_rate,
+        "rtf": elapsed / audio_seconds,
+    }
+
+
+def generate_audio(
+    *,
+    runtime,
+    model,
+    text: str,
+    language: str,
+    voice_prompt: str | None,
+    exaggeration: float,
+    cfg_weight: float,
+    temperature: float,
+):
     with contextlib.redirect_stdout(sys.stderr):
         results = list(
             model.generate(
-                text=normalized_text,
+                text=text,
                 lang_code=language,
                 ref_audio=str(voice_prompt) if voice_prompt else None,
                 exaggeration=min(max(float(exaggeration), 0.0), 1.0),
@@ -186,19 +284,84 @@ def synthesize_to_wav(
     audio = np.concatenate([np.asarray(result.audio).reshape(-1) for result in results])
     if audio.size == 0:
         raise RuntimeError("Chatterbox MLX produced an empty waveform")
-    sample_rate = int(model.sample_rate)
-    output = output.expanduser()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    runtime["sf"].write(output, audio, sample_rate, subtype="PCM_16")
+    return audio, int(model.sample_rate)
 
-    elapsed = time.perf_counter() - started_at
-    audio_seconds = float(audio.size) / sample_rate
-    return {
-        "sample_rate": sample_rate,
-        "inference_seconds": elapsed,
-        "audio_seconds": audio_seconds,
-        "rtf": elapsed / audio_seconds,
-    }
+
+def warm_up_model(
+    *,
+    runtime,
+    model,
+    language: str,
+    voice_prompt: str | None,
+    exaggeration: float,
+    cfg_weight: float,
+    temperature: float,
+) -> float:
+    started_at = time.perf_counter()
+    generate_audio(
+        runtime=runtime,
+        model=model,
+        text="Hazır." if language == "tr" else "Ready.",
+        language=language,
+        voice_prompt=voice_prompt,
+        exaggeration=exaggeration,
+        cfg_weight=cfg_weight,
+        temperature=temperature,
+    )
+    return time.perf_counter() - started_at
+
+
+def boundary_trim_range(
+    samples,
+    sample_rate: int,
+    *,
+    threshold_db: float = -45.0,
+    leading_padding_ms: float = 40.0,
+    trailing_padding_ms: float = 120.0,
+) -> tuple[int, int]:
+    sample_count = len(samples)
+    if sample_count == 0 or sample_rate <= 0:
+        return 0, sample_count
+
+    frame_sample_count = max(1, int(round(sample_rate * 0.02)))
+    threshold_power = math.pow(10.0, threshold_db / 10.0)
+    first_active_sample = None
+    last_active_sample = None
+
+    for frame_start in range(0, sample_count, frame_sample_count):
+        frame_end = min(sample_count, frame_start + frame_sample_count)
+        power = sum(float(sample) * float(sample) for sample in samples[frame_start:frame_end])
+        power /= frame_end - frame_start
+        if power >= threshold_power:
+            if first_active_sample is None:
+                first_active_sample = frame_start
+            last_active_sample = frame_end
+
+    if first_active_sample is None or last_active_sample is None:
+        return 0, sample_count
+
+    leading_padding = int(round(sample_rate * max(0.0, leading_padding_ms) / 1_000.0))
+    trailing_padding = int(round(sample_rate * max(0.0, trailing_padding_ms) / 1_000.0))
+    return (
+        max(0, first_active_sample - leading_padding),
+        min(sample_count, last_active_sample + trailing_padding),
+    )
+
+
+def apply_boundary_fade(samples, sample_rate: int, *, fade_ms: float = 8.0) -> int:
+    fade_sample_count = min(
+        len(samples) // 2,
+        int(round(sample_rate * max(0.0, fade_ms) / 1_000.0)),
+    )
+    if fade_sample_count <= 0:
+        return 0
+
+    denominator = max(1, fade_sample_count - 1)
+    for index in range(fade_sample_count):
+        gain = float(index) / denominator
+        samples[index] *= gain
+        samples[-(index + 1)] *= gain
+    return fade_sample_count
 
 
 def normalize_language_code(language: str) -> str:

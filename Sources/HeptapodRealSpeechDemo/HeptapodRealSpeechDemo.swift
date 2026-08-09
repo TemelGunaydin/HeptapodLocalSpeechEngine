@@ -53,7 +53,7 @@ struct HeptapodRealSpeechDemo {
             )
 
             print("Preparing VAD, ASR, translation, and TTS models; first run may download weights...")
-            try await pipeline.prepare()
+            try await pipeline.prepare(synthesisLanguageCode: options.targetLanguageCode)
 
             print("Processing through HeptapodSpeechToSpeechPipeline...")
             guard let result = try await pipeline.processDetailed(

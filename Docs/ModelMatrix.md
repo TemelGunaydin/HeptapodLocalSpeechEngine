@@ -24,7 +24,7 @@ Swift-native adapter.
 | MT | NLLB Distilled 600M | Research | ~1.6 GB | Non-commercial comparison candidate |
 | MT | SeamlessM4T text path | Research | ~4.8 GB | Heavy unified translation research |
 | TTS | MOSS-TTS-Nano 100M | Streaming bridge ready | ~1.5 GB | First PCM before full synthesis; CPU ONNX |
-| TTS | Chatterbox MLX FP16 | Python/MLX bridge ready | ~3.5 GB | Natural Turkish quality mode; full segments |
+| TTS | Chatterbox MLX FP16 | Python/MLX bridge ready | ~3.5 GB | Natural Turkish quality mode; warmed sentence pipeline |
 | TTS | macOS System Voice | Adapter target ready | 0 MB | Fast fallback; uses installed voices |
 | TTS | Kokoro 82M | Adapter target ready | ~130 MB | Small supported-language TTS; no Turkish phonemizer |
 | TTS | Chatterbox TTS | Python bridge ready | ~4.3 GB | Natural Turkish; about 23s output latency in the tested run |

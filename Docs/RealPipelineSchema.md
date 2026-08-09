@@ -160,9 +160,11 @@ The synthesis queue and playback queue are serial and nonblocking for the input
 loop. This gives the pipeline a backbuffer-like shape: later segments can be
 translated and synthesized while an earlier segment is still playing.
 MOSS-TTS-Nano is the live default and forwards 48 kHz PCM chunks before the full
-waveform is complete. Chatterbox MLX is the higher-quality segment mode; the
-older PyTorch Chatterbox bridge remains a slow reference. The next OpenAI-like
-step is a model-native streaming ASR backend and incremental translation.
+waveform is complete. Chatterbox MLX is the higher-quality mode: it warms before
+capture, pipelines natural sentence batches, trims excess boundary silence, and
+fades buffer edges before playback. The older PyTorch Chatterbox bridge remains
+a slow reference. The next OpenAI-like step is a model-native streaming ASR
+backend and incremental translation.
 
 The demo starts live speaker playback at `1.0x` and increases it through
 `AVAudioUnitTimePitch` only when queued translated segments accumulate, capped

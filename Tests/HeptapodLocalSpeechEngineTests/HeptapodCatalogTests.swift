@@ -133,6 +133,26 @@ func unavailableFactoryBuildsPipelineThatFailsAtPrepare() async throws {
 }
 
 @Test
+func pipelineForwardsTargetLanguageDuringSynthesisPreparation() async throws {
+    let synthesizer = PreparationRecordingSynthesizer()
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.chatterboxMLXTTS.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        recognizer: StubRecognizer(),
+        translator: StubTranslator(),
+        synthesizer: synthesizer
+    )
+
+    try await pipeline.prepare(synthesisLanguageCode: "tr")
+
+    #expect(await synthesizer.preparedLanguageCodes() == ["tr"])
+}
+
+@Test
 func speechSwiftFactoryReportsRunnableFilePipeline() {
     let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(
         for: HeptapodSpeechSwiftAdapterFactory.starterFilePipelineConfiguration
@@ -1947,6 +1967,33 @@ private actor RecordingTextSynthesizer: HeptapodSpeechSynthesizer {
 
     func synthesizedTexts() -> [String] {
         texts
+    }
+}
+
+private actor PreparationRecordingSynthesizer: HeptapodSpeechSynthesizer {
+    nonisolated let descriptor = HeptapodModelDescriptor.chatterboxMLXTTS
+    private var languageCodes: [String] = []
+
+    func prepare() async throws {}
+
+    func prepare(languageCode: String?) async throws {
+        languageCodes.append(languageCode ?? "")
+    }
+
+    func synthesize(
+        _ text: String,
+        languageCode: String,
+        voiceID: String?
+    ) async throws -> HeptapodSynthesizedSpeech {
+        HeptapodSynthesizedSpeech(
+            pcm16: Data([1, 1]),
+            sampleRate: 24_000,
+            languageCode: languageCode
+        )
+    }
+
+    func preparedLanguageCodes() -> [String] {
+        languageCodes
     }
 }
 

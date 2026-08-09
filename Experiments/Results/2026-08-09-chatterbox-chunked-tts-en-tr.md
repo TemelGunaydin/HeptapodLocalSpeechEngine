@@ -54,6 +54,31 @@ but total synthesis was slower than the baseline. The two subsequent runs used
 independent app and Python worker processes and produced closely matching warm
 results.
 
+## Warm-up and Boundary Follow-up
+
+A follow-up based on commit `4f68ebb` moved one short target-language generation
+into worker preparation. The worker now reports ready only after lazy model and
+tokenizer initialization completes. Boundary processing also keeps 40 ms of
+leading silence and 120 ms of trailing silence, then applies an 8 ms fade at
+both PCM edges. Internal pauses are not inspected or removed.
+
+| Run | First audio after ASR | Full result after ASR | Output duration |
+| --- | ---: | ---: | ---: |
+| Warm-up + boundary trim 1 | 2.067s | 4.800s | 7.960s |
+| Warm-up + boundary trim 2 | 2.140s | 5.081s | 7.540s |
+| Warm-up + boundary trim average | 2.104s | 4.941s | 7.750s |
+
+The explicit warm-up added 0.853 seconds to model preparation in a direct warm
+worker smoke test. It did not improve steady-state inference; it moves lazy
+first-request work before capture begins. Chatterbox generation is stochastic,
+so first-audio timing varied with generated waveform length.
+
+Compared with the original 6.203-second single-segment baseline, follow-up first
+audio remained 66.1% lower and full-result latency was 20.3% lower. Boundary
+processing reduced average output duration by 14.6% versus the untrimmed
+sentence pipeline, from 9.080 seconds to 7.750 seconds. Both measured aggregate
+WAVs began and ended at a zero PCM sample after the edge fade.
+
 ## Command
 
 ```bash
@@ -76,9 +101,9 @@ HeptapodLiveSpeechDemo \
 
 - Keep natural sentence pipelining for Chatterbox quality mode; it materially
   improves time to first speech without changing the translation.
-- Add a short Chatterbox warm-up during model preparation so the first live
-  translation does not pay the lazy Metal compilation cost.
-- Investigate per-sentence leading/trailing silence before shipping this as the
-  default quality path. Independent synthesis increased this fixture's output
-  duration from 6.80s to 9.08s, which can make the spoken translation fall
-  behind the source.
+- Keep the short target-language warm-up in persistent MLX workers so the first
+  live translation does not pay lazy initialization costs.
+- Keep conservative boundary trim and fade enabled. The quality mode still
+  speaks this fixture about 14% longer than the old single-segment output, so a
+  real speaker-playback listening test remains necessary before making it the
+  default live mode.

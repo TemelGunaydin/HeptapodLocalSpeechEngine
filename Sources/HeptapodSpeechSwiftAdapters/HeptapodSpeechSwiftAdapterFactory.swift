@@ -163,7 +163,8 @@ public enum HeptapodSpeechSwiftAdapterFactory {
                     ?? URL(fileURLWithPath: "Tools/chatterbox_mlx_tts.py"),
                 voicePromptURL: chatterboxMLXVoicePromptURL,
                 device: "mps",
-                usesPersistentWorker: chatterboxMLXUsesPersistentWorker
+                usesPersistentWorker: chatterboxMLXUsesPersistentWorker,
+                warmsUpPersistentWorker: true
             )
         case HeptapodModelDescriptor.mossTTSNano.id:
             HeptapodMossTTSNanoAdapter(

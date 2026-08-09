@@ -323,13 +323,20 @@ Tools/run_live_translation.sh \
 
 Both backends keep their model loaded in a persistent worker. MOSS streams
 48 kHz PCM chunks and keeps Metal available for ASR/MT by using ONNX Runtime on
-CPU. Chatterbox MLX generates a complete 24 kHz segment on Metal, then plays it.
-Pass `--tts-one-shot` only for Chatterbox bridge debugging.
+CPU. Chatterbox MLX warms its Metal path before capture starts, generates
+natural sentence-sized 24 kHz batches, and sends the first sentence to playback
+while the next one is synthesized. Excess boundary silence is trimmed and each
+batch receives a short edge fade. Pass `--tts-one-shot` only for Chatterbox
+bridge debugging.
 
 On the tested M3 Max, MOSS produced its first PCM 1.40 seconds after ASR and
 finished at 3.36 seconds. Chatterbox MLX produced its complete higher-quality
-segment at 3.48 seconds. The older PyTorch Chatterbox backend remains available
-as `--tts chatterbox` for comparison, but is not recommended for live output.
+segment at 3.48 seconds. A later three-sentence quality benchmark measured
+Chatterbox first audio at 2.10 seconds and full output at 4.94 seconds on
+average; see
+[`2026-08-09-chatterbox-chunked-tts-en-tr.md`](Experiments/Results/2026-08-09-chatterbox-chunked-tts-en-tr.md).
+The older PyTorch Chatterbox backend remains available as `--tts chatterbox`
+for comparison, but is not recommended for live output.
 
 For voice cloning, pass a permitted 5-10 second reference WAV:
 

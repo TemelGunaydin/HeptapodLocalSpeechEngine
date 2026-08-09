@@ -35,7 +35,10 @@ struct HeptapodLiveSpeechDemo {
             let targetLanguageCode = options.targetLanguageCode ?? "tr"
             let pipeline = try makePipeline(options: options)
 
-            try await pipeline.prepare(includeSynthesis: options.usesTextOnly == false)
+            try await pipeline.prepare(
+                includeSynthesis: options.usesTextOnly == false,
+                synthesisLanguageCode: targetLanguageCode
+            )
             printHeader(
                 options: options,
                 sourceLanguageCode: sourceLanguageCode,

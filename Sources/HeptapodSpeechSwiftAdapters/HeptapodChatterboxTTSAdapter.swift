@@ -14,6 +14,7 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
     private let timeoutSeconds: TimeInterval
     private let fileManager: FileManager
     private let usesPersistentWorker: Bool
+    private let warmsUpPersistentWorker: Bool
     private var worker: ChatterboxWorker?
 
     public init(
@@ -25,6 +26,7 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
         outputSampleRate: Int = HeptapodChatterboxTTSAdapter.defaultOutputSampleRate,
         timeoutSeconds: TimeInterval = 600,
         usesPersistentWorker: Bool = true,
+        warmsUpPersistentWorker: Bool = false,
         fileManager: FileManager = .default
     ) {
         self.descriptor = descriptor
@@ -37,10 +39,15 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
         self.outputSampleRate = outputSampleRate
         self.timeoutSeconds = timeoutSeconds
         self.usesPersistentWorker = usesPersistentWorker
+        self.warmsUpPersistentWorker = warmsUpPersistentWorker
         self.fileManager = fileManager
     }
 
     public func prepare() async throws {
+        try await prepare(languageCode: nil)
+    }
+
+    public func prepare(languageCode: String?) async throws {
         guard fileManager.fileExists(atPath: scriptURL.path) else {
             throw HeptapodChatterboxTTSError.missingScript(scriptURL.path)
         }
@@ -48,7 +55,7 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
             throw HeptapodChatterboxTTSError.missingVoicePrompt(voicePromptURL.path)
         }
         if usesPersistentWorker {
-            _ = try ensureWorker(languageCode: "en")
+            _ = try ensureWorker(languageCode: languageCode ?? "en")
         }
     }
 
@@ -62,7 +69,7 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
             throw HeptapodChatterboxTTSError.emptyText
         }
 
-        try await prepare()
+        try await prepare(languageCode: languageCode)
 
         let workingDirectory = fileManager.temporaryDirectory
             .appendingPathComponent("heptapod-chatterbox-\(UUID().uuidString)", isDirectory: true)
@@ -198,6 +205,7 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
             scriptURL: scriptURL,
             languageCode: languageCode,
             device: device,
+            warmsUp: warmsUpPersistentWorker,
             timeoutSeconds: timeoutSeconds,
             fileManager: fileManager
         )
@@ -288,6 +296,7 @@ private final class ChatterboxWorker {
         scriptURL: URL,
         languageCode: String,
         device: String?,
+        warmsUp: Bool,
         timeoutSeconds: TimeInterval,
         fileManager: FileManager
     ) throws {
@@ -314,6 +323,9 @@ private final class ChatterboxWorker {
         ]
         if let device, device.isEmpty == false {
             arguments.append(contentsOf: ["--device", device])
+        }
+        if warmsUp {
+            arguments.append("--warmup")
         }
         process.arguments = arguments
         process.standardInput = stdinPipe
