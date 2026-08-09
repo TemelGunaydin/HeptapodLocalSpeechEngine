@@ -29,6 +29,18 @@ public actor HeptapodAVAudioPlaybackSink:
         requestedPlaybackRate = normalizedPlaybackRate
     }
 
+    public func prepare(sampleRate: Int = 24_000) throws {
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(sampleRate),
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw HeptapodAVAudioPlaybackError.invalidFormat
+        }
+        try prepareIfNeeded(format: format)
+    }
+
     public func play(_ speech: HeptapodSynthesizedSpeech) async throws {
         let pair = AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>.makeStream()
         pair.continuation.yield(speech)

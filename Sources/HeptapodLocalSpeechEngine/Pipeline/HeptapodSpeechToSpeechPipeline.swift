@@ -89,6 +89,16 @@ public actor HeptapodSpeechToSpeechPipeline {
         return try await vad.containsSpeech(chunk)
     }
 
+    public func speechSegments(in chunk: HeptapodAudioChunk) async throws -> [HeptapodVoiceActivitySegment] {
+        if let segmentingVAD = vad as? any HeptapodSegmentingVoiceActivityDetector {
+            return try await segmentingVAD.speechSegments(in: chunk)
+        }
+        guard try await containsSpeech(chunk) else {
+            return []
+        }
+        return [HeptapodVoiceActivitySegment(startTime: 0, endTime: chunk.duration)]
+    }
+
     public func recognizeSpeech(
         _ chunk: HeptapodAudioChunk,
         sourceLanguageCode: String?

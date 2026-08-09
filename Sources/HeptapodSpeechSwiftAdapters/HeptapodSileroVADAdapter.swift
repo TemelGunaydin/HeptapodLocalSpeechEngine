@@ -2,7 +2,7 @@ import Foundation
 import HeptapodLocalSpeechEngine
 import SpeechVAD
 
-public actor HeptapodSileroVADAdapter: HeptapodVoiceActivityDetector {
+public actor HeptapodSileroVADAdapter: HeptapodSegmentingVoiceActivityDetector {
     public static let defaultModelID = SileroVADModel.defaultCoreMLModelId
     public nonisolated let descriptor: HeptapodModelDescriptor
 
@@ -31,13 +31,22 @@ public actor HeptapodSileroVADAdapter: HeptapodVoiceActivityDetector {
     }
 
     public func containsSpeech(_ chunk: HeptapodAudioChunk) async throws -> Bool {
+        try await speechSegments(in: chunk).isEmpty == false
+    }
+
+    public func speechSegments(in chunk: HeptapodAudioChunk) async throws -> [HeptapodVoiceActivitySegment] {
         let model = try await preparedModel()
         let audio = HeptapodSpeechSwiftAudioSamples.floatSamples(
             from: chunk,
             targetSampleRate: SileroVADModel.sampleRate
         )
         let segments = model.detectSpeech(audio: audio, sampleRate: SileroVADModel.sampleRate)
-        return segments.isEmpty == false
+        return segments.map {
+            HeptapodVoiceActivitySegment(
+                startTime: TimeInterval($0.startTime),
+                endTime: TimeInterval($0.endTime)
+            )
+        }
     }
 
     private func preparedModel() async throws -> SileroVADModel {

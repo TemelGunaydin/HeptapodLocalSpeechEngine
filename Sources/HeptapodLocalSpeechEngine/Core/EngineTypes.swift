@@ -176,6 +176,28 @@ public struct HeptapodAudioChunk: Sendable {
         self.sampleRate = sampleRate
         self.channelCount = channelCount
     }
+
+    public var duration: TimeInterval {
+        guard sampleRate > 0, channelCount > 0 else {
+            return 0
+        }
+        let bytesPerSecond = Double(sampleRate * channelCount * MemoryLayout<Int16>.size)
+        return Double(pcm16.count) / bytesPerSecond
+    }
+}
+
+public struct HeptapodVoiceActivitySegment: Equatable, Sendable {
+    public let startTime: TimeInterval
+    public let endTime: TimeInterval
+
+    public init(startTime: TimeInterval, endTime: TimeInterval) {
+        self.startTime = max(0, startTime)
+        self.endTime = max(self.startTime, endTime)
+    }
+
+    public var duration: TimeInterval {
+        endTime - startTime
+    }
 }
 
 public struct HeptapodTranscriptSegment: Equatable, Sendable {

@@ -398,6 +398,7 @@ def compatible_macos_sdk_root() -> Path | None:
 def benchmark_command(
     case: BenchmarkCase,
     *,
+    demo_binary: Path,
     audio_path: Path | None,
     uses_system_audio: bool,
     source_language: str,
@@ -416,7 +417,7 @@ def benchmark_command(
     speech_output_dir: Path | None,
 ) -> list[str]:
     command = [
-        str(DEMO_BINARY),
+        str(demo_binary),
         "--real",
     ]
     if uses_system_audio:
@@ -493,6 +494,7 @@ def format_number(value: float) -> str:
 
 def make_report(
     *,
+    demo_binary: Path,
     output_dir: Path,
     audio_path: Path | None,
     uses_system_audio: bool,
@@ -641,6 +643,7 @@ def make_report(
                 " ".join(
                     benchmark_command(
                         result.case,
+                        demo_binary=demo_binary,
                         audio_path=audio_path,
                         uses_system_audio=uses_system_audio,
                         source_language=source_language,
@@ -809,6 +812,11 @@ def main() -> int:
     )
     parser.add_argument("--duration", type=float, default=60.0, help="Seconds to process.")
     parser.add_argument(
+        "--demo-binary",
+        type=Path,
+        help="Use an existing HeptapodLiveSpeechDemo binary, normally with --skip-build.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("/tmp/heptapod-live-benchmarks") / datetime.now().strftime("%Y%m%d-%H%M%S"),
@@ -970,6 +978,8 @@ def main() -> int:
         elif shutil.which(tts_python_executable) is None:
             parser.error(f"TTS Python executable was not found: {tts_python_executable}")
 
+    demo_binary = args.demo_binary.expanduser().resolve() if args.demo_binary else DEMO_BINARY
+
     if not args.skip_build:
         build_command = ["swift", "build", "--product", DEMO_PRODUCT]
         build_status = run_command(
@@ -983,6 +993,9 @@ def main() -> int:
         if metallib_status != 0:
             return metallib_status
 
+    if not args.dry_run and not demo_binary.is_file():
+        parser.error(f"demo binary does not exist: {demo_binary}")
+
     results: list[RunResult] = []
     for case in cases:
         trace_path = output_dir / "traces" / f"{case.slug}.jsonl"
@@ -990,6 +1003,7 @@ def main() -> int:
         speech_output_dir = output_dir / "audio" / case.slug if args.speech_output else None
         command = benchmark_command(
             case,
+            demo_binary=demo_binary,
             audio_path=audio_path,
             uses_system_audio=args.system_audio,
             source_language=args.source_language,
@@ -1034,6 +1048,7 @@ def main() -> int:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = make_report(
+        demo_binary=demo_binary,
         output_dir=output_dir,
         audio_path=audio_path,
         uses_system_audio=args.system_audio,

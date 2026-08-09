@@ -9,6 +9,10 @@ public protocol HeptapodVoiceActivityDetector: HeptapodEngineComponent {
     func containsSpeech(_ chunk: HeptapodAudioChunk) async throws -> Bool
 }
 
+public protocol HeptapodSegmentingVoiceActivityDetector: HeptapodVoiceActivityDetector {
+    func speechSegments(in chunk: HeptapodAudioChunk) async throws -> [HeptapodVoiceActivitySegment]
+}
+
 public protocol HeptapodSpeechRecognizer: HeptapodEngineComponent {
     func transcribe(_ chunk: HeptapodAudioChunk, languageHint: String?) async throws -> HeptapodTranscriptSegment?
     func finish(languageHint: String?) async throws -> HeptapodTranscriptSegment?

@@ -1939,6 +1939,61 @@ func sentenceBufferedLiveSessionMergesCorrectedTailAfterLeadingWindowNoise() asy
 }
 
 @Test
+func sentenceBufferedLiveSessionSplitsASRWindowAtIntraChunkSilence() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubSegmentingVoiceActivityDetector(segments: [
+            HeptapodVoiceActivitySegment(startTime: 0, endTime: 0.3),
+            HeptapodVoiceActivitySegment(startTime: 0.7, endTime: 1.0)
+        ]),
+        recognizer: SequenceRecognizer([
+            "First sentence.",
+            "Second sentence."
+        ]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(
+                pcm16: Data(repeating: 1, count: 32_000),
+                sampleRate: 16_000
+            )
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        minimumSilenceEndpointDuration: 0.35,
+        asrStabilization: HeptapodASRStabilizationConfiguration(
+            isEnabled: true,
+            maximumWindowChunks: 4,
+            minimumStableWords: 20
+        )
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == ["First sentence.", "Second sentence."])
+}
+
+@Test
 func wavFilePlaybackSinkWritesSequentialFiles() async throws {
     let outputDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("heptapod-wav-sink-\(UUID().uuidString)")
@@ -1960,6 +2015,21 @@ private struct StubVoiceActivityDetector: HeptapodVoiceActivityDetector {
 
     func containsSpeech(_ chunk: HeptapodAudioChunk) async throws -> Bool {
         chunk.pcm16.isEmpty == false
+    }
+}
+
+private struct StubSegmentingVoiceActivityDetector: HeptapodSegmentingVoiceActivityDetector {
+    let descriptor = HeptapodModelDescriptor.sileroVAD
+    let segments: [HeptapodVoiceActivitySegment]
+
+    func prepare() async throws {}
+
+    func containsSpeech(_ chunk: HeptapodAudioChunk) async throws -> Bool {
+        segments.isEmpty == false
+    }
+
+    func speechSegments(in chunk: HeptapodAudioChunk) async throws -> [HeptapodVoiceActivitySegment] {
+        segments
     }
 }
 

@@ -306,12 +306,16 @@ struct HeptapodLiveSpeechDemo {
             maximumDurationSeconds: durationSeconds
         )
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
+        let playbackSink = try await makePlaybackSink(
+            shouldPlayOutput: shouldPlayOutput,
+            fileSink: fileSink
+        )
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
             sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
-            playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
+            playbackSink: playbackSink,
             endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
             tracePath: tracePath,
@@ -346,12 +350,16 @@ struct HeptapodLiveSpeechDemo {
             maximumDurationSeconds: durationSeconds
         )
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
+        let playbackSink = try await makePlaybackSink(
+            shouldPlayOutput: shouldPlayOutput,
+            fileSink: fileSink
+        )
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
             sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
-            playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
+            playbackSink: playbackSink,
             endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
             tracePath: tracePath,
@@ -385,12 +393,16 @@ struct HeptapodLiveSpeechDemo {
             interval: .milliseconds(Int64((chunkDurationSeconds * 1_000).rounded()))
         )
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
+        let playbackSink = try await makePlaybackSink(
+            shouldPlayOutput: shouldPlayOutput,
+            fileSink: fileSink
+        )
         try await runLiveSession(
             pipeline: pipeline,
             chunks: source.chunks(),
             sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
-            playbackSink: makePlaybackSink(shouldPlayOutput: shouldPlayOutput, fileSink: fileSink),
+            playbackSink: playbackSink,
             endpointing: endpointing,
             usesSentenceBuffering: usesSentenceBuffering,
             tracePath: tracePath,
@@ -403,18 +415,18 @@ struct HeptapodLiveSpeechDemo {
     private static func makePlaybackSink(
         shouldPlayOutput: Bool,
         fileSink: HeptapodWAVFilePlaybackSink?
-    ) -> (any HeptapodSpeechPlaybackSink)? {
+    ) async throws -> (any HeptapodSpeechPlaybackSink)? {
         var sinks: [any HeptapodSpeechPlaybackSink] = []
         if let fileSink {
             sinks.append(fileSink)
         }
         if shouldPlayOutput {
-            sinks.append(
-                HeptapodAVAudioPlaybackSink(
-                    playbackRate: 1,
-                    maximumPlaybackRate: 1.15
-                )
+            let playbackSink = HeptapodAVAudioPlaybackSink(
+                playbackRate: 1,
+                maximumPlaybackRate: 1.15
             )
+            try await playbackSink.prepare()
+            sinks.append(playbackSink)
         }
 
         if sinks.isEmpty {

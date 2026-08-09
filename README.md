@@ -265,8 +265,10 @@ Qwen adapter is still a chunk decoder, but the live session now wraps it in a
 ring-buffer/sliding-window policy: each new speech chunk is decoded with recent
 audio context, consecutive hypotheses are compared, and only the stable prefix
 delta is sent downstream. On a silence endpoint, the latest uncommitted
-hypothesis is flushed. Text-only mode keeps this off by default for easier ASR
-observability; use `--asr-stabilization` to force it on or
+hypothesis is flushed. Segment-capable VAD adapters also expose speech time
+ranges, so a pause of at least 350 ms can close the ASR window even when it falls
+inside a larger capture chunk. Text-only mode keeps stabilization off by default
+for easier ASR observability; use `--asr-stabilization` to force it on or
 `--no-asr-stabilization` to disable it explicitly.
 
 Latency tuning:
@@ -306,7 +308,9 @@ the serial playback queue as soon as they arrive; the full waveform does not nee
 to finish first. Speaker playback starts at `1.0x` and rises gradually to at most
 `1.15x` only when the backlog grows. WAV archive output remains at the original
 TTS rate. The next segment can transcribe while the previous segment is
-translating, synthesizing, or playing.
+translating, synthesizing, or playing. When speaker output is enabled, the
+24 kHz playback graph is prepared before system capture starts. This avoids
+reconfiguring the macOS output graph when the first translated sentence arrives.
 
 Use `--text-only` when local TTS quality is not useful. In this mode the demo
 prepares only VAD, ASR, and translation, skips TTS model load/inference entirely,
@@ -347,6 +351,22 @@ ScreenCaptureKit configuration, so browser playback is required for the
 repeatable browser-audio smoke. Playback-audio runs require at least one output
 event by default (`translation_ready` for text or `result_ready` for speech), so
 silent capture is reported as a failed case.
+
+If the demo was built by Xcode or FlowDeck, reuse that exact executable without
+invoking another Swift toolchain:
+
+```bash
+Tools/run_live_benchmark.py \
+  --system-audio \
+  --playback-audio /tmp/heptapod-local-fixture.wav \
+  --playback-browser chrome \
+  --demo-binary /path/to/HeptapodLiveSpeechDemo \
+  --skip-build
+```
+
+The 60-second browser/system-audio stress result, including the failed baseline
+and the fixed `18/18/18` transcript/output/playback run, is recorded in
+[`2026-08-09-system-audio-stress-en-tr.md`](Experiments/Results/2026-08-09-system-audio-stress-en-tr.md).
 
 Install the low-latency live voice once:
 

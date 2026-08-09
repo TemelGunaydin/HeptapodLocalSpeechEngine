@@ -97,6 +97,7 @@ public struct HeptapodSentenceEndpointingConfiguration: Sendable {
     public let flushOnTerminalPunctuation: Bool
     public let maximumBufferedSegments: Int
     public let minimumWordsForPunctuationEndpoint: Int
+    public let minimumSilenceEndpointDuration: TimeInterval
     public let asrStabilization: HeptapodASRStabilizationConfiguration
 
     public init(
@@ -105,6 +106,7 @@ public struct HeptapodSentenceEndpointingConfiguration: Sendable {
         flushOnTerminalPunctuation: Bool = false,
         maximumBufferedSegments: Int = 8,
         minimumWordsForPunctuationEndpoint: Int = 8,
+        minimumSilenceEndpointDuration: TimeInterval = 0.35,
         asrStabilization: HeptapodASRStabilizationConfiguration = .disabled
     ) {
         self.flushOnSilence = flushOnSilence
@@ -112,6 +114,7 @@ public struct HeptapodSentenceEndpointingConfiguration: Sendable {
         self.flushOnTerminalPunctuation = flushOnTerminalPunctuation
         self.maximumBufferedSegments = maximumBufferedSegments
         self.minimumWordsForPunctuationEndpoint = minimumWordsForPunctuationEndpoint
+        self.minimumSilenceEndpointDuration = max(0, minimumSilenceEndpointDuration)
         self.asrStabilization = asrStabilization
     }
 }
@@ -282,52 +285,81 @@ public actor HeptapodLiveSpeechSession {
                         continuation.yield(.segmentStarted(index: index))
                         continuation.yield(.audioLevel(index: index, .measured(from: chunk)))
 
-                        let transcript: HeptapodTranscriptSegment?
-                        let isSpeechBuffered: Bool
                         if endpointing.asrStabilization.isEnabled {
-                            guard try await pipeline.containsSpeech(chunk) else {
-                                if let finalTranscript = asrStabilizer.flushLatest(fallbackLanguageCode: sourceLanguageCode) {
-                                    if outputMode == .textOnly {
-                                        continuation.yield(.transcript(index: index, finalTranscript))
-                                    }
-                                    pending.append(finalTranscript)
-                                }
-                                if endpointing.flushOnSilence, pending.hasText {
-                                    let didFlush = await flushPending(
-                                        &pending,
-                                        at: index,
-                                        synthesisQueue: synthesisQueue,
-                                        sourceLanguageCode: sourceLanguageCode
-                                    )
-                                    if didFlush == false {
-                                        continuation.yield(.silenceSkipped(index: index))
-                                    }
-                                } else {
-                                    continuation.yield(.silenceSkipped(index: index))
-                                }
-                                asrStabilizer.reset()
+                            let activity = try await pipeline.speechSegments(in: chunk)
+                            let speechChunks = endpointedSpeechChunks(
+                                from: chunk,
+                                activity: activity,
+                                minimumSilenceDuration: endpointing.minimumSilenceEndpointDuration
+                            )
+                            guard speechChunks.isEmpty == false else {
+                                await flushStabilizedSpeechEndpoint(
+                                    asrStabilizer: &asrStabilizer,
+                                    pending: &pending,
+                                    at: index,
+                                    endpointing: endpointing,
+                                    outputMode: outputMode,
+                                    synthesisQueue: synthesisQueue,
+                                    sourceLanguageCode: sourceLanguageCode,
+                                    continuation: continuation
+                                )
                                 continue
                             }
 
-                            let windowChunk = asrStabilizer.append(chunk)
-                            let hypothesis = try await pipeline.recognizeSpeech(
-                                windowChunk,
-                                sourceLanguageCode: sourceLanguageCode
-                            )
-                            transcript = hypothesis.flatMap { asrStabilizer.commitStablePrefix(from: $0) }
-                            isSpeechBuffered = hypothesis != nil
-                        } else {
-                            transcript = try await pipeline.transcribeSpeech(
-                                chunk,
-                                sourceLanguageCode: sourceLanguageCode
-                            )
-                            isSpeechBuffered = false
+                            for speechChunk in speechChunks {
+                                if speechChunk.startsAfterSilence {
+                                    await flushStabilizedSpeechEndpoint(
+                                        asrStabilizer: &asrStabilizer,
+                                        pending: &pending,
+                                        at: index,
+                                        endpointing: endpointing,
+                                        outputMode: outputMode,
+                                        synthesisQueue: synthesisQueue,
+                                        sourceLanguageCode: sourceLanguageCode,
+                                        continuation: continuation
+                                    )
+                                }
+
+                                let windowChunk = asrStabilizer.append(speechChunk.chunk)
+                                let hypothesis = try await pipeline.recognizeSpeech(
+                                    windowChunk,
+                                    sourceLanguageCode: sourceLanguageCode
+                                )
+                                if let transcript = hypothesis.flatMap({
+                                    asrStabilizer.commitStablePrefix(from: $0)
+                                }) {
+                                    await consumeSentenceBufferedTranscript(
+                                        transcript,
+                                        at: index,
+                                        pending: &pending,
+                                        endpointing: endpointing,
+                                        outputMode: outputMode,
+                                        synthesisQueue: synthesisQueue,
+                                        sourceLanguageCode: sourceLanguageCode,
+                                        continuation: continuation
+                                    )
+                                }
+                            }
+
+                            if speechChunks.last?.endsBeforeSilence == true {
+                                await flushStabilizedSpeechEndpoint(
+                                    asrStabilizer: &asrStabilizer,
+                                    pending: &pending,
+                                    at: index,
+                                    endpointing: endpointing,
+                                    outputMode: outputMode,
+                                    synthesisQueue: synthesisQueue,
+                                    sourceLanguageCode: sourceLanguageCode,
+                                    continuation: continuation
+                                )
+                            }
+                            continue
                         }
 
-                        guard let transcript else {
-                            if isSpeechBuffered {
-                                continue
-                            }
+                        guard let transcript = try await pipeline.transcribeSpeech(
+                            chunk,
+                            sourceLanguageCode: sourceLanguageCode
+                        ) else {
                             if endpointing.flushOnSilence, pending.hasText {
                                 let didFlush = await flushPending(
                                     &pending,
@@ -344,29 +376,16 @@ public actor HeptapodLiveSpeechSession {
                             continue
                         }
 
-                        if outputMode == .textOnly {
-                            continuation.yield(.transcript(index: index, transcript))
-                        }
-                        pending.append(transcript)
-
-                        if endpointing.flushOnTerminalPunctuation {
-                            await flushCompletedPending(
-                                &pending,
-                                at: index,
-                                minimumWords: endpointing.minimumWordsForPunctuationEndpoint,
-                                synthesisQueue: synthesisQueue,
-                                sourceLanguageCode: sourceLanguageCode
-                            )
-                        }
-
-                        if shouldFlush(pending, endpointing: endpointing) {
-                            await flushPending(
-                                &pending,
-                                at: index,
-                                synthesisQueue: synthesisQueue,
-                                sourceLanguageCode: sourceLanguageCode
-                            )
-                        }
+                        await consumeSentenceBufferedTranscript(
+                            transcript,
+                            at: index,
+                            pending: &pending,
+                            endpointing: endpointing,
+                            outputMode: outputMode,
+                            synthesisQueue: synthesisQueue,
+                            sourceLanguageCode: sourceLanguageCode,
+                            continuation: continuation
+                        )
                     }
 
                     if let finalTranscript = asrStabilizer.flushLatest(fallbackLanguageCode: sourceLanguageCode) {
@@ -402,6 +421,163 @@ public actor HeptapodLiveSpeechSession {
             }
         }
     }
+}
+
+private struct EndpointedSpeechChunk {
+    let chunk: HeptapodAudioChunk
+    let startsAfterSilence: Bool
+    let endsBeforeSilence: Bool
+}
+
+private struct VoiceActivityRange {
+    var startTime: TimeInterval
+    var endTime: TimeInterval
+}
+
+private func endpointedSpeechChunks(
+    from chunk: HeptapodAudioChunk,
+    activity: [HeptapodVoiceActivitySegment],
+    minimumSilenceDuration: TimeInterval
+) -> [EndpointedSpeechChunk] {
+    let duration = chunk.duration
+    guard duration > 0, activity.isEmpty == false else {
+        return []
+    }
+    guard minimumSilenceDuration > 0 else {
+        return [EndpointedSpeechChunk(
+            chunk: chunk,
+            startsAfterSilence: false,
+            endsBeforeSilence: false
+        )]
+    }
+
+    let sortedRanges = activity
+        .map {
+            VoiceActivityRange(
+                startTime: min(duration, max(0, $0.startTime)),
+                endTime: min(duration, max(0, $0.endTime))
+            )
+        }
+        .filter { $0.endTime > $0.startTime }
+        .sorted { $0.startTime < $1.startTime }
+    guard sortedRanges.isEmpty == false else {
+        return []
+    }
+
+    var groups: [VoiceActivityRange] = []
+    for range in sortedRanges {
+        guard var last = groups.last else {
+            groups.append(range)
+            continue
+        }
+        let gap = range.startTime - last.endTime
+        if range.startTime <= last.endTime || gap < minimumSilenceDuration {
+            last.endTime = max(last.endTime, range.endTime)
+            groups[groups.count - 1] = last
+        } else {
+            groups.append(range)
+        }
+    }
+
+    return groups.indices.compactMap { index in
+        let group = groups[index]
+        let previous = index > groups.startIndex ? groups[index - 1] : nil
+        let nextIndex = groups.index(after: index)
+        let next = nextIndex < groups.endIndex ? groups[nextIndex] : nil
+        let lowerTime = previous.map { ($0.endTime + group.startTime) / 2 } ?? 0
+        let upperTime = next.map { (group.endTime + $0.startTime) / 2 } ?? duration
+        let lowerByte = pcm16ByteOffset(at: lowerTime, in: chunk)
+        let upperByte = pcm16ByteOffset(at: upperTime, in: chunk)
+        guard upperByte > lowerByte else {
+            return nil
+        }
+
+        let silenceBefore = previous.map { group.startTime - $0.endTime } ?? group.startTime
+        let silenceAfter = duration - group.endTime
+        return EndpointedSpeechChunk(
+            chunk: HeptapodAudioChunk(
+                pcm16: chunk.pcm16.subdata(in: lowerByte..<upperByte),
+                sampleRate: chunk.sampleRate,
+                channelCount: chunk.channelCount
+            ),
+            startsAfterSilence: silenceBefore >= minimumSilenceDuration,
+            endsBeforeSilence: next == nil && silenceAfter >= minimumSilenceDuration
+        )
+    }
+}
+
+private func pcm16ByteOffset(at time: TimeInterval, in chunk: HeptapodAudioChunk) -> Int {
+    let bytesPerFrame = max(1, chunk.channelCount) * MemoryLayout<Int16>.size
+    let frame = Int((max(0, time) * Double(max(0, chunk.sampleRate))).rounded())
+    return min(chunk.pcm16.count, max(0, frame * bytesPerFrame))
+}
+
+private func consumeSentenceBufferedTranscript(
+    _ transcript: HeptapodTranscriptSegment,
+    at index: Int,
+    pending: inout PendingSentence,
+    endpointing: HeptapodSentenceEndpointingConfiguration,
+    outputMode: HeptapodLiveOutputMode,
+    synthesisQueue: LiveSynthesisQueue,
+    sourceLanguageCode: String?,
+    continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
+) async {
+    if outputMode == .textOnly {
+        continuation.yield(.transcript(index: index, transcript))
+    }
+    pending.append(transcript)
+
+    if endpointing.flushOnTerminalPunctuation {
+        await flushCompletedPending(
+            &pending,
+            at: index,
+            minimumWords: endpointing.minimumWordsForPunctuationEndpoint,
+            synthesisQueue: synthesisQueue,
+            sourceLanguageCode: sourceLanguageCode
+        )
+    }
+
+    if shouldFlush(pending, endpointing: endpointing) {
+        await flushPending(
+            &pending,
+            at: index,
+            synthesisQueue: synthesisQueue,
+            sourceLanguageCode: sourceLanguageCode
+        )
+    }
+}
+
+private func flushStabilizedSpeechEndpoint(
+    asrStabilizer: inout SlidingASRStabilizer,
+    pending: inout PendingSentence,
+    at index: Int,
+    endpointing: HeptapodSentenceEndpointingConfiguration,
+    outputMode: HeptapodLiveOutputMode,
+    synthesisQueue: LiveSynthesisQueue,
+    sourceLanguageCode: String?,
+    continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
+) async {
+    if let finalTranscript = asrStabilizer.flushLatest(fallbackLanguageCode: sourceLanguageCode) {
+        if outputMode == .textOnly {
+            continuation.yield(.transcript(index: index, finalTranscript))
+        }
+        pending.append(finalTranscript)
+    }
+
+    if endpointing.flushOnSilence, pending.hasText {
+        let didFlush = await flushPending(
+            &pending,
+            at: index,
+            synthesisQueue: synthesisQueue,
+            sourceLanguageCode: sourceLanguageCode
+        )
+        if didFlush == false {
+            continuation.yield(.silenceSkipped(index: index))
+        }
+    } else {
+        continuation.yield(.silenceSkipped(index: index))
+    }
+    asrStabilizer.reset()
 }
 
 private struct PendingSentence {
