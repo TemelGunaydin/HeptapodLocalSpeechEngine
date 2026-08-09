@@ -203,4 +203,41 @@ public actor HeptapodSpeechToSpeechPipeline {
             voiceID: voiceID
         )
     }
+
+    func synthesizeLiveStream(
+        _ translation: HeptapodTranslatedText,
+        voiceID: String? = nil
+    ) async -> AsyncThrowingStream<HeptapodSynthesizedSpeech, Error> {
+        if synthesizer.descriptor.capabilities.contains(.streamingTTS) {
+            return await synthesizeStream(translation, voiceID: voiceID)
+        }
+
+        let textChunks = HeptapodSpeechSynthesisTextChunker.chunks(
+            in: translation.translatedText
+        )
+        let synthesizer = synthesizer
+        let languageCode = translation.targetLanguageCode
+        let pair = AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>.makeStream()
+        let task = Task {
+            do {
+                for textChunk in textChunks {
+                    try Task.checkCancellation()
+                    pair.continuation.yield(
+                        try await synthesizer.synthesize(
+                            textChunk,
+                            languageCode: languageCode,
+                            voiceID: voiceID
+                        )
+                    )
+                }
+                pair.continuation.finish()
+            } catch {
+                pair.continuation.finish(throwing: error)
+            }
+        }
+        pair.continuation.onTermination = { _ in
+            task.cancel()
+        }
+        return pair.stream
+    }
 }

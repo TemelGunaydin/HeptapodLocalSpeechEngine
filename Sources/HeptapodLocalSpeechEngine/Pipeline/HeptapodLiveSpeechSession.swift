@@ -1420,7 +1420,7 @@ private func synthesizeForLivePlayback(
     index: Int,
     playbackQueue: LivePlaybackQueue
 ) async throws -> HeptapodSynthesizedSpeech {
-    let sourceStream = await pipeline.synthesizeStream(translation, voiceID: voiceID)
+    let sourceStream = await pipeline.synthesizeLiveStream(translation, voiceID: voiceID)
     let relay = LiveSpeechStreamRelay()
     let isPlaybackEnqueued = await playbackQueue.enqueue(index: index, speechStream: relay.stream)
 

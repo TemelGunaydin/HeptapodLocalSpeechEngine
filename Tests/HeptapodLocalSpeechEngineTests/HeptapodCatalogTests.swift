@@ -508,6 +508,113 @@ func liveSessionStreamsFirstAudioBeforeSynthesisCompletes() async throws {
 }
 
 @Test
+func liveSessionPipelinesBatchTTSAtNaturalSentenceBoundaries() async throws {
+    let translatedText = """
+    Bugün yerel canlı çeviriyi test ediyoruz. Çevrilen ses net ve doğal gelmelidir. Dün önerdiğin kitap beklediğimden çok daha iyi.
+    """
+    let synthesizer = RecordingTextSynthesizer(descriptor: .chatterboxMLXTTS)
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.chatterboxMLXTTS.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        recognizer: UTF8ChunkRecognizer(),
+        translator: FixedTranslator(translatedText: translatedText),
+        synthesizer: synthesizer
+    )
+    let playbackSink = StreamingRecordingPlaybackSink(probe: StreamingProgressProbe())
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        playbackSink: playbackSink
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [HeptapodAudioChunk(pcm16: Data("hello".utf8), sampleRate: 16_000)]
+    )
+
+    let events = await session.run(chunks: source.chunks())
+    var resultPCM = Data()
+    var playbackStartedIndexes: [Int] = []
+    var playbackCompletedIndexes: [Int] = []
+    for try await event in events {
+        switch event {
+        case .result(_, let result):
+            resultPCM = result.speech.pcm16
+        case .playbackStarted(let index):
+            playbackStartedIndexes.append(index)
+        case .playbackCompleted(let index):
+            playbackCompletedIndexes.append(index)
+        default:
+            break
+        }
+    }
+
+    #expect(await synthesizer.synthesizedTexts() == [
+        "Bugün yerel canlı çeviriyi test ediyoruz.",
+        "Çevrilen ses net ve doğal gelmelidir.",
+        "Dün önerdiğin kitap beklediğimden çok daha iyi."
+    ])
+    #expect(await playbackSink.streamedChunks() == [
+        Data([1, 1]),
+        Data([2, 2]),
+        Data([3, 3])
+    ])
+    #expect(resultPCM == Data([1, 1, 2, 2, 3, 3]))
+    #expect(playbackStartedIndexes == [1])
+    #expect(playbackCompletedIndexes == [1])
+}
+
+@Test
+func liveSynthesisKeepsNativeStreamingTTSOnOneTextStream() async throws {
+    let translatedText = "Birinci cümle hazır. İkinci cümle de hazır."
+    let synthesizer = RecordingTextSynthesizer(descriptor: .mossTTSNano)
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.mossTTSNano.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: synthesizer
+    )
+    let translation = HeptapodTranslatedText(
+        sourceText: "source",
+        translatedText: translatedText,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+
+    let stream = await pipeline.synthesizeLiveStream(translation)
+    var speechChunks: [HeptapodSynthesizedSpeech] = []
+    for try await speech in stream {
+        speechChunks.append(speech)
+    }
+
+    #expect(await synthesizer.synthesizedTexts() == [translatedText])
+    #expect(speechChunks.count == 1)
+}
+
+@Test
+func speechSynthesisChunkerSplitsLongSentencesAtClauses() {
+    let chunks = HeptapodSpeechSynthesisTextChunker.chunks(
+        in: "Bir iki üç dört beş, altı yedi sekiz dokuz on; on bir on iki on üç on dört.",
+        maximumWordsPerChunk: 6,
+        minimumWordsPerChunk: 2
+    )
+
+    #expect(chunks == [
+        "Bir iki üç dört beş,",
+        "altı yedi sekiz dokuz on;",
+        "on bir on iki on üç on dört."
+    ])
+}
+
+@Test
 func liveSessionReportsFirstAudioWithoutPlaybackSink() async throws {
     let configuration = HeptapodPipelineConfiguration(
         speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
@@ -1791,6 +1898,55 @@ private struct EchoTranslator: HeptapodTextTranslator {
             sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode
         )
+    }
+}
+
+private struct FixedTranslator: HeptapodTextTranslator {
+    let descriptor = HeptapodModelDescriptor.madladTranslator
+    let translatedText: String
+
+    func prepare() async throws {}
+
+    func translate(
+        _ text: String,
+        sourceLanguageCode: String?,
+        targetLanguageCode: String
+    ) async throws -> HeptapodTranslatedText {
+        HeptapodTranslatedText(
+            sourceText: text,
+            translatedText: translatedText,
+            sourceLanguageCode: sourceLanguageCode,
+            targetLanguageCode: targetLanguageCode
+        )
+    }
+}
+
+private actor RecordingTextSynthesizer: HeptapodSpeechSynthesizer {
+    nonisolated let descriptor: HeptapodModelDescriptor
+    private var texts: [String] = []
+
+    init(descriptor: HeptapodModelDescriptor) {
+        self.descriptor = descriptor
+    }
+
+    func prepare() async throws {}
+
+    func synthesize(
+        _ text: String,
+        languageCode: String,
+        voiceID: String?
+    ) async throws -> HeptapodSynthesizedSpeech {
+        texts.append(text)
+        let marker = UInt8(texts.count)
+        return HeptapodSynthesizedSpeech(
+            pcm16: Data([marker, marker]),
+            sampleRate: 24_000,
+            languageCode: languageCode
+        )
+    }
+
+    func synthesizedTexts() -> [String] {
+        texts
     }
 }
 
