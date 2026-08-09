@@ -215,10 +215,12 @@ to Swiftly while selecting a newer Command Line Tools SDK, which produces an
 directly, for example `Tools/run_live_translation.sh --duration 60`.
 
 Live audio sources use sentence/pause buffering by default: ASR results are
-accumulated while the speaker is talking, then translation and TTS run when a
-pause/silence endpoint is detected. This avoids speaking tiny partial fragments
-such as "One of the goals of." Use `--chunk-translation` to restore the older
-translate-every-chunk behavior.
+accumulated while the speaker is talking. A completed terminal-punctuation
+prefix is sent to translation and TTS immediately while an unfinished trailing
+phrase remains in the ASR buffer. Silence, the configured segment limit, and
+stream end provide fallback endpoints. This avoids both waiting for an entire
+paragraph and speaking tiny partial fragments such as "One of the goals of."
+Use `--chunk-translation` to restore the older translate-every-chunk behavior.
 
 Low and balanced latency presets also enable ASR stabilization. The current
 Qwen adapter is still a chunk decoder, but the live session now wraps it in a
@@ -246,6 +248,8 @@ xcrun swift run HeptapodLiveSpeechDemo -- \
 chunks, stable-prefix ASR, terminal-punctuation endpoints, and a four-segment
 safety flush. The `low` preset uses 0.75 second chunks and a single buffered
 segment; it starts sooner but often splits a sentence into unnatural phrases.
+The `quality` preset also releases completed sentences at terminal punctuation,
+but keeps its longer capture window and eight-segment safety limit for context.
 
 For better sentence context at the cost of waiting longer before the first
 translation, use:
@@ -273,9 +277,10 @@ audio playback events.
 
 Use `--trace /tmp/heptapod-run.jsonl` to write JSON-lines timestamps for later
 performance comparison. The trace records run start/finish, segment starts,
-per-segment audio RMS/peak levels, ASR-ready latency, TTS first-audio latency,
-post-ASR output latency, playback completion latency, transcript/translation
-text, generated audio byte count, and the command used for the run.
+per-segment audio RMS/peak levels, ASR-ready latency, output-queue wait, MT
+duration, TTS first-audio/full-output duration, playback-queue wait, queue
+backlogs, transcript/translation text, generated audio byte count, and the
+command used for the run.
 
 Repeatable system-audio smoke test:
 

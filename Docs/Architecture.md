@@ -72,8 +72,10 @@ The live session owns:
 - skipping silent chunks,
 - running optional ring-buffer/sliding-window ASR stabilization,
 - queueing stable transcript segments into serial translation/TTS synthesis,
+- releasing completed sentence prefixes while retaining unfinished ASR tails,
 - forwarding streaming TTS PCM chunks into a serial playback backbuffer,
 - increasing playback rate only when the translated-audio backlog grows,
+- emitting per-stage queue, MT, TTS, and playback timing events,
 - keeping input/ASR work moving while previous translated audio is translating,
   synthesizing, or playing.
 

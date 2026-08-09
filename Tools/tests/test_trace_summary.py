@@ -55,6 +55,31 @@ class TraceSummaryFirstAudioTests(unittest.TestCase):
 
         self.assertAlmostEqual(summary.playback_start_latency.average or 0, 0.2)
 
+    def test_stage_timings_and_queue_backlogs_are_summarized(self) -> None:
+        summary = self.load(
+            [
+                {"event": "output_queued", "backlogSegments": 2},
+                {"event": "translation_started", "queueWaitSeconds": 0.3},
+                {"event": "translation_completed", "stageDurationSeconds": 0.4},
+                {
+                    "event": "tts_first_audio",
+                    "firstAudioLatencySeconds": 1.1,
+                    "stageDurationSeconds": 0.7,
+                },
+                {"event": "result_ready", "stageDurationSeconds": 1.4},
+                {"event": "playback_queued", "backlogSegments": 3},
+                {"event": "playback_started", "queueWaitSeconds": 0.2},
+            ]
+        )
+
+        self.assertAlmostEqual(summary.output_queue_wait_latency.average or 0, 0.3)
+        self.assertAlmostEqual(summary.translation_stage_latency.average or 0, 0.4)
+        self.assertAlmostEqual(summary.synthesis_first_audio_latency.average or 0, 0.7)
+        self.assertAlmostEqual(summary.synthesis_stage_latency.average or 0, 1.4)
+        self.assertAlmostEqual(summary.playback_queue_wait_latency.average or 0, 0.2)
+        self.assertEqual(summary.peak_output_backlog, 2)
+        self.assertEqual(summary.peak_playback_backlog, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

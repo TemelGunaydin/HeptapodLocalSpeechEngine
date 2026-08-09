@@ -122,17 +122,18 @@ flowchart LR
 The system-audio path captures macOS output through ScreenCaptureKit, converts it
 to 16 kHz mono PCM chunks, and feeds the same live session as microphone and file
 input. macOS may require Screen Recording permission for the terminal process.
-Live audio sources use sentence/pause endpointing by default: ASR text is
-buffered while speech continues, then translation and TTS run after punctuation,
-a silence endpoint, the four-segment safety limit, or stream end.
+Live audio sources use sentence/pause endpointing by default. When buffered ASR
+text contains a completed terminal-punctuation prefix, that prefix enters MT/TTS
+immediately while the unfinished suffix stays buffered. Silence, the configured
+segment safety limit, and stream end remain fallback endpoints.
 `--chunk-translation` keeps the older per-chunk behavior for debugging latency.
 The demo exposes `--latency low|balanced|quality`, `--chunk-duration`,
 `--max-buffered-segments`, `--punctuation-endpoint`, and
 `--no-asr-stabilization` so the cascaded local pipeline can move along the
 speed/quality tradeoff without changing code.
-`--trace <path>` writes JSON-lines timestamps for ASR-ready, TTS first audio,
-post-ASR output, and playback completion so runs can be compared without
-terminal scraping.
+`--trace <path>` writes JSON-lines timestamps for ASR-ready, output queue wait,
+MT, TTS first audio/full output, playback queue wait/completion, and queue depth
+so runs can be compared without terminal scraping.
 `--text-only` skips TTS model preparation, synthesis, playback, and WAV output.
 That mode is currently the recommended low-latency local test path when the
 available offline voices are not natural enough.
@@ -154,7 +155,9 @@ neighboring hypotheses, commits only stable prefix deltas downstream, and flushe
 the latest uncommitted hypothesis on a silence endpoint.
 The balanced preset is the live default: 1 second chunks, stable-prefix ASR,
 punctuation endpoints, and a four-segment safety flush. The low preset is
-intentionally aggressive at 0.75 second chunks and one buffered segment.
+intentionally aggressive at 0.75 second chunks and one buffered segment. The
+quality preset uses the same completed-sentence endpoint with a six-word minimum,
+while retaining its longer chunks and eight-segment fallback for context.
 
 The synthesis queue and playback queue are serial and nonblocking for the input
 loop. This gives the pipeline a backbuffer-like shape: later segments can be
@@ -169,7 +172,8 @@ backend and incremental translation.
 The demo starts live speaker playback at `1.0x` and increases it through
 `AVAudioUnitTimePitch` only when queued translated segments accumulate, capped
 at `1.15x`. File sink WAVs retain the original synthesis rate. Trace events
-distinguish first PCM, full output readiness, and playback duration.
+distinguish MT, synthesis, queue wait, first PCM, full output readiness, and
+playback duration.
 
 The remaining work is app-level polish: permission UX, background audio
 behavior, streaming partial-ASR improvements, and production playback

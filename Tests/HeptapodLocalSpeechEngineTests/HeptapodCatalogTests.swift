@@ -406,6 +406,8 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
             break
         case .translation:
             break
+        case .outputQueued, .translationStarted, .translationCompleted, .synthesisStarted, .playbackQueued:
+            break
         case .synthesisAudioReady:
             break
         case .playbackStarted(let index):
@@ -458,6 +460,7 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
 
     let events = await session.run(chunks: source.chunks())
     var eventNames: [String] = []
+    var playbackBacklogs: [Int] = []
 
     for try await event in events {
         switch event {
@@ -470,6 +473,10 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
         case .transcript:
             break
         case .translation:
+            break
+        case .playbackQueued(_, let backlog):
+            playbackBacklogs.append(backlog)
+        case .outputQueued, .translationStarted, .translationCompleted, .synthesisStarted:
             break
         case .synthesisAudioReady:
             break
@@ -484,6 +491,7 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
 
     #expect(eventNames.firstIndex(of: "result-2")! < eventNames.firstIndex(of: "playback-1")!)
     #expect(eventNames.suffix(2) == ["playback-1", "playback-2"])
+    #expect(playbackBacklogs == [1, 2])
     #expect(await playbackSink.playedCount() == 2)
 }
 
@@ -721,7 +729,9 @@ func liveSessionTextOnlyTranslatesWithoutSynthesisOrPlayback() async throws {
             eventNames.append("translation")
         case .playbackCompleted(let index):
             playbackIndexes.append(index)
-        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .synthesisAudioReady, .playbackStarted:
+        case .segmentStarted, .audioLevel, .silenceSkipped, .outputQueued, .translationStarted,
+             .translationCompleted, .synthesisStarted, .result, .synthesisAudioReady,
+             .playbackQueued, .playbackStarted:
             break
         }
     }
@@ -775,7 +785,9 @@ func textOnlyBufferedTranslationNormalizesFragmentedTranscript() async throws {
             transcripts.append(transcript.text)
         case .translation(_, let result):
             translations.append(result.translation.translatedText)
-        case .segmentStarted, .audioLevel, .silenceSkipped, .result, .synthesisAudioReady, .playbackStarted, .playbackCompleted:
+        case .segmentStarted, .audioLevel, .silenceSkipped, .outputQueued, .translationStarted,
+             .translationCompleted, .synthesisStarted, .result, .synthesisAudioReady,
+             .playbackQueued, .playbackStarted, .playbackCompleted:
             break
         }
     }
@@ -1179,7 +1191,11 @@ func sentenceBufferedLiveSessionFlushesAtMaximumBufferedSegments() async throws 
             HeptapodAudioChunk(pcm16: Data("before we continue".utf8), sampleRate: 16_000)
         ]
     )
-    let endpointing = HeptapodSentenceEndpointingConfiguration(maximumBufferedSegments: 2)
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        flushOnTerminalPunctuation: true,
+        maximumBufferedSegments: 2,
+        minimumWordsForPunctuationEndpoint: 6
+    )
 
     let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
     var resultTexts: [String] = []
@@ -1194,6 +1210,122 @@ func sentenceBufferedLiveSessionFlushesAtMaximumBufferedSegments() async throws 
         "I want to explain how this works",
         "before we continue"
     ])
+}
+
+@Test
+func sentenceBufferedLiveSessionFlushesCompletedSentenceAndRetainsTail() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(
+                pcm16: Data("Today we are testing local live translation. The translated voice".utf8),
+                sampleRate: 16_000
+            ),
+            HeptapodAudioChunk(
+                pcm16: Data("should sound clear and natural.".utf8),
+                sampleRate: 16_000
+            )
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        flushOnTerminalPunctuation: true,
+        maximumBufferedSegments: 8,
+        minimumWordsForPunctuationEndpoint: 6
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var transcriptEvents: [(index: Int, text: String)] = []
+
+    for try await event in events {
+        if case .transcript(let index, let transcript) = event {
+            transcriptEvents.append((index, transcript.text))
+        }
+    }
+
+    #expect(transcriptEvents.map(\.index) == [1, 2])
+    #expect(transcriptEvents.map(\.text) == [
+        "Today we are testing local live translation.",
+        "The translated voice should sound clear and natural."
+    ])
+}
+
+@Test
+func sentenceBufferedLiveSessionWaitsForStablePunctuationBeforeEarlyFlush() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: SequenceRecognizer([
+            "Today we are testing local live translation",
+            "Today we are testing local live translation.",
+            "Today we are testing local live translation."
+        ]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data([1]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([2]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data([3]), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        flushOnTerminalPunctuation: true,
+        maximumBufferedSegments: 8,
+        minimumWordsForPunctuationEndpoint: 6,
+        asrStabilization: HeptapodASRStabilizationConfiguration(
+            isEnabled: true,
+            maximumWindowChunks: 4,
+            minimumStableWords: 3
+        )
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var eventNames: [String] = []
+
+    for try await event in events {
+        switch event {
+        case .segmentStarted(let index):
+            eventNames.append("segment-\(index)")
+        case .transcript(let index, let transcript):
+            eventNames.append("transcript-\(index)-\(transcript.text)")
+        default:
+            break
+        }
+    }
+
+    let transcriptEvent = "transcript-3-Today we are testing local live translation."
+    #expect(eventNames.filter { $0.hasPrefix("transcript-") } == [transcriptEvent])
+    #expect(eventNames.firstIndex(of: transcriptEvent)! < eventNames.firstIndex(of: "segment-4")!)
 }
 
 @Test
@@ -1227,6 +1359,7 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
 
     let events = await session.runSentenceBuffered(chunks: source.chunks())
     var eventNames: [String] = []
+    var outputBacklogs: [Int] = []
 
     for try await event in events {
         switch event {
@@ -1240,6 +1373,10 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
             break
         case .translation:
             break
+        case .outputQueued(_, let backlog):
+            outputBacklogs.append(backlog)
+        case .translationStarted, .translationCompleted, .synthesisStarted, .playbackQueued:
+            break
         case .silenceSkipped, .synthesisAudioReady, .playbackStarted, .playbackCompleted:
             break
         }
@@ -1247,6 +1384,7 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
 
     #expect(eventNames.firstIndex(of: "segment-3")! < eventNames.firstIndex(of: "result-2")!)
     #expect(eventNames.suffix(2) == ["result-2", "result-4"])
+    #expect(outputBacklogs == [1, 2])
 }
 
 @Test

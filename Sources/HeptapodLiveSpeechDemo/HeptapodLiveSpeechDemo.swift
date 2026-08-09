@@ -448,7 +448,12 @@ struct HeptapodLiveSpeechDemo {
 
         var segmentStartTimes: [Int: Date] = [:]
         var transcriptTimes: [Int: Date] = [:]
+        var outputQueuedTimes: [Int: Date] = [:]
+        var translationStartTimes: [Int: Date] = [:]
+        var synthesisStartTimes: [Int: Date] = [:]
+        var firstAudioReadyTimes: [Int: Date] = [:]
         var resultTimes: [Int: Date] = [:]
+        var playbackQueuedTimes: [Int: Date] = [:]
         var playbackStartTimes: [Int: Date] = [:]
         let trace = try tracePath.map { try LiveTraceRecorder(path: $0) }
         try trace?.record(
@@ -484,17 +489,45 @@ struct HeptapodLiveSpeechDemo {
                     transcriptText: transcript.text,
                     resultLatencySeconds: resultLatencySeconds
                 )
+            case .outputQueued(let index, let backlog):
+                outputQueuedTimes[index] = Date()
+                try trace?.record(
+                    event: "output_queued",
+                    index: index,
+                    backlogSegments: backlog
+                )
+            case .translationStarted(let index):
+                let startedAt = Date()
+                translationStartTimes[index] = startedAt
+                try trace?.record(
+                    event: "translation_started",
+                    index: index,
+                    queueWaitSeconds: outputQueuedTimes[index].map { startedAt.timeIntervalSince($0) }
+                )
+            case .translationCompleted(let index):
+                let completedAt = Date()
+                try trace?.record(
+                    event: "translation_completed",
+                    index: index,
+                    stageDurationSeconds: translationStartTimes[index].map {
+                        completedAt.timeIntervalSince($0)
+                    }
+                )
+            case .synthesisStarted(let index):
+                synthesisStartTimes[index] = Date()
+                try trace?.record(event: "synthesis_started", index: index)
             case .result(let index, let result):
                 printResult(result)
-                let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
-                let outputLatencySeconds = transcriptTimes[index].map { Date().timeIntervalSince($0) }
+                let readyAt = Date()
+                let resultLatencySeconds = segmentStartTimes[index].map { readyAt.timeIntervalSince($0) }
+                let outputLatencySeconds = transcriptTimes[index].map { readyAt.timeIntervalSince($0) }
                 if let startedAt = segmentStartTimes[index] {
-                    print("  Timing: result ready +\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
+                    print("  Timing: result ready +\(String(format: "%.2f", readyAt.timeIntervalSince(startedAt)))s")
                 }
                 if let transcriptAt = transcriptTimes[index] {
-                    print("  Timing: MT + TTS +\(String(format: "%.2f", Date().timeIntervalSince(transcriptAt)))s")
+                    print("  Timing: MT + TTS +\(String(format: "%.2f", readyAt.timeIntervalSince(transcriptAt)))s")
                 }
-                resultTimes[index] = Date()
+                resultTimes[index] = readyAt
                 try trace?.record(
                     event: "result_ready",
                     index: index,
@@ -503,7 +536,10 @@ struct HeptapodLiveSpeechDemo {
                     speechBytes: result.speech.pcm16.count,
                     sampleRate: result.speech.sampleRate,
                     resultLatencySeconds: resultLatencySeconds,
-                    outputLatencySeconds: outputLatencySeconds
+                    outputLatencySeconds: outputLatencySeconds,
+                    stageDurationSeconds: synthesisStartTimes[index].map {
+                        readyAt.timeIntervalSince($0)
+                    }
                 )
                 if shouldSpeak {
                     speak(result.translation.translatedText)
@@ -525,6 +561,7 @@ struct HeptapodLiveSpeechDemo {
                 )
             case .synthesisAudioReady(let index):
                 let readyAt = Date()
+                firstAudioReadyTimes[index] = readyAt
                 let firstAudioLatencySeconds = transcriptTimes[index].map { readyAt.timeIntervalSince($0) }
                 if let firstAudioLatencySeconds {
                     print("  TTS: first audio +\(String(format: "%.2f", firstAudioLatencySeconds))s after ASR")
@@ -532,19 +569,33 @@ struct HeptapodLiveSpeechDemo {
                 try trace?.record(
                     event: "tts_first_audio",
                     index: index,
-                    firstAudioLatencySeconds: firstAudioLatencySeconds
+                    firstAudioLatencySeconds: firstAudioLatencySeconds,
+                    stageDurationSeconds: synthesisStartTimes[index].map {
+                        readyAt.timeIntervalSince($0)
+                    }
+                )
+            case .playbackQueued(let index, let backlog):
+                playbackQueuedTimes[index] = Date()
+                try trace?.record(
+                    event: "playback_queued",
+                    index: index,
+                    backlogSegments: backlog
                 )
             case .playbackStarted(let index):
                 let startedAt = Date()
                 playbackStartTimes[index] = startedAt
                 let playbackLatencySeconds = resultTimes[index].map { startedAt.timeIntervalSince($0) }
+                let playbackReadyAt = firstAudioReadyTimes[index] ?? playbackQueuedTimes[index]
                 if let resultAt = resultTimes[index] {
                     print("  Playback: started +\(String(format: "%.2f", startedAt.timeIntervalSince(resultAt)))s after result")
                 }
                 try trace?.record(
                     event: "playback_started",
                     index: index,
-                    playbackLatencySeconds: playbackLatencySeconds
+                    playbackLatencySeconds: playbackLatencySeconds,
+                    queueWaitSeconds: playbackReadyAt.map {
+                        startedAt.timeIntervalSince($0)
+                    }
                 )
             case .playbackCompleted(let index):
                 let completedAt = Date()
@@ -958,10 +1009,8 @@ private enum DemoLatencyPreset: String {
 
     var usesPunctuationEndpoint: Bool {
         switch self {
-        case .low, .balanced:
+        case .low, .balanced, .quality:
             true
-        case .quality:
-            false
         }
     }
 
@@ -972,7 +1021,7 @@ private enum DemoLatencyPreset: String {
         case .balanced:
             6
         case .quality:
-            10
+            6
         }
     }
 
@@ -1046,7 +1095,10 @@ private final class LiveTraceRecorder {
         outputLatencySeconds: TimeInterval? = nil,
         firstAudioLatencySeconds: TimeInterval? = nil,
         playbackLatencySeconds: TimeInterval? = nil,
-        playbackDurationSeconds: TimeInterval? = nil
+        playbackDurationSeconds: TimeInterval? = nil,
+        stageDurationSeconds: TimeInterval? = nil,
+        queueWaitSeconds: TimeInterval? = nil,
+        backlogSegments: Int? = nil
     ) throws {
         let now = Date()
         let traceEvent = LiveTraceEvent(
@@ -1068,6 +1120,9 @@ private final class LiveTraceRecorder {
             firstAudioLatencySeconds: firstAudioLatencySeconds,
             playbackLatencySeconds: playbackLatencySeconds,
             playbackDurationSeconds: playbackDurationSeconds,
+            stageDurationSeconds: stageDurationSeconds,
+            queueWaitSeconds: queueWaitSeconds,
+            backlogSegments: backlogSegments,
             command: CommandLine.arguments
         )
         var data = try encoder.encode(traceEvent)
@@ -1095,6 +1150,9 @@ private struct LiveTraceEvent: Encodable {
     let firstAudioLatencySeconds: TimeInterval?
     let playbackLatencySeconds: TimeInterval?
     let playbackDurationSeconds: TimeInterval?
+    let stageDurationSeconds: TimeInterval?
+    let queueWaitSeconds: TimeInterval?
+    let backlogSegments: Int?
     let command: [String]
 }
 

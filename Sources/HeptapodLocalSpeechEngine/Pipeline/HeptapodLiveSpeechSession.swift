@@ -23,9 +23,14 @@ public enum HeptapodLiveSpeechEvent: Sendable {
     case audioLevel(index: Int, HeptapodAudioLevel)
     case silenceSkipped(index: Int)
     case transcript(index: Int, HeptapodTranscriptSegment)
+    case outputQueued(index: Int, backlog: Int)
+    case translationStarted(index: Int)
+    case translationCompleted(index: Int)
     case translation(index: Int, HeptapodLiveTranslationResult)
+    case synthesisStarted(index: Int)
     case result(index: Int, HeptapodSpeechToSpeechResult)
     case synthesisAudioReady(index: Int)
+    case playbackQueued(index: Int, backlog: Int)
     case playbackStarted(index: Int)
     case playbackCompleted(index: Int)
 }
@@ -189,11 +194,15 @@ public actor HeptapodLiveSpeechSession {
                         switch outputMode {
                         case .speech:
                             continuation.yield(.transcript(index: index, transcript))
+                            continuation.yield(.outputQueued(index: index, backlog: 1))
+                            continuation.yield(.translationStarted(index: index))
                             let translation = try await pipeline.translateTranscript(
                                 transcript,
                                 sourceLanguageCode: sourceLanguageCode,
                                 targetLanguageCode: targetLanguageCode
                             )
+                            continuation.yield(.translationCompleted(index: index))
+                            continuation.yield(.synthesisStarted(index: index))
                             let speech = try await synthesizeForLivePlayback(
                                 pipeline: pipeline,
                                 translation: translation,
@@ -209,11 +218,14 @@ public actor HeptapodLiveSpeechSession {
                             continuation.yield(.result(index: index, result))
                         case .textOnly:
                             continuation.yield(.transcript(index: index, transcript))
+                            continuation.yield(.outputQueued(index: index, backlog: 1))
+                            continuation.yield(.translationStarted(index: index))
                             let translation = try await pipeline.translateTranscript(
                                 transcript,
                                 sourceLanguageCode: sourceLanguageCode,
                                 targetLanguageCode: targetLanguageCode
                             )
+                            continuation.yield(.translationCompleted(index: index))
                             continuation.yield(.translation(
                                 index: index,
                                 HeptapodLiveTranslationResult(transcript: transcript, translation: translation)
@@ -337,6 +349,16 @@ public actor HeptapodLiveSpeechSession {
                         }
                         pending.append(transcript)
 
+                        if endpointing.flushOnTerminalPunctuation {
+                            await flushCompletedPending(
+                                &pending,
+                                at: index,
+                                minimumWords: endpointing.minimumWordsForPunctuationEndpoint,
+                                synthesisQueue: synthesisQueue,
+                                sourceLanguageCode: sourceLanguageCode
+                            )
+                        }
+
                         if shouldFlush(pending, endpointing: endpointing) {
                             await flushPending(
                                 &pending,
@@ -395,22 +417,6 @@ private struct PendingSentence {
         parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    var translationText: String {
-        TranscriptTranslationNormalizer.normalized(text)
-    }
-
-    var wordCount: Int {
-        text.split { $0.isWhitespace || $0.isNewline }.count
-    }
-
-    var endsWithTerminalPunctuation: Bool {
-        guard let last = text.last else {
-            return false
-        }
-        let terminalPunctuation: Set<Character> = [".", "?", "!", "。", "؟", "！"]
-        return terminalPunctuation.contains(last)
-    }
-
     mutating func append(_ transcript: HeptapodTranscriptSegment) {
         let trimmed = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else {
@@ -428,6 +434,27 @@ private struct PendingSentence {
         let split = retainsIncompleteTail
             ? TranscriptTranslationNormalizer.readyTextAndRemainder(text)
             : TranscriptTranslationNormalizer.readyTextOnly(text)
+        return drain(split, fallbackLanguageCode: fallbackLanguageCode)
+    }
+
+    mutating func drainCompletedTranscript(
+        fallbackLanguageCode: String?,
+        minimumWords: Int
+    ) -> HeptapodTranscriptSegment? {
+        let split = TranscriptTranslationNormalizer.completedTextAndRemainder(
+            text,
+            minimumWords: minimumWords
+        )
+        guard split.readyText.isEmpty == false else {
+            return nil
+        }
+        return drain(split, fallbackLanguageCode: fallbackLanguageCode)
+    }
+
+    private mutating func drain(
+        _ split: TranscriptTranslationNormalizer.Split,
+        fallbackLanguageCode: String?
+    ) -> HeptapodTranscriptSegment? {
         let retainedLanguageCode = languageCode
 
         parts.removeAll()
@@ -496,6 +523,37 @@ private struct TranscriptTranslationNormalizer {
 
     static func readyTextOnly(_ text: String) -> Split {
         Split(readyText: normalized(text), remainderText: "")
+    }
+
+    static func completedTextAndRemainder(_ text: String, minimumWords: Int) -> Split {
+        let fragments = collapseDuplicatePrefixes(fragments(in: text))
+        guard fragments.isEmpty == false else {
+            return Split(readyText: "", remainderText: "")
+        }
+
+        var readyEndIndex: Array<Fragment>.Index?
+        for index in fragments.indices {
+            let nextIndex = fragments.index(after: index)
+            let next = nextIndex < fragments.endIndex ? fragments[nextIndex] : nil
+            guard fragments[index].punctuation != nil,
+                  shouldJoin(fragments[index], with: next) == false else {
+                continue
+            }
+
+            let candidate = normalized(Array(fragments[...index]))
+            if words(in: candidate).count >= max(1, minimumWords) {
+                readyEndIndex = nextIndex
+            }
+        }
+
+        guard let readyEndIndex else {
+            return Split(readyText: "", remainderText: normalized(fragments))
+        }
+
+        return Split(
+            readyText: normalized(Array(fragments[..<readyEndIndex])),
+            remainderText: normalized(Array(fragments[readyEndIndex...]))
+        )
     }
 
     private static func normalized(_ fragments: [Fragment]) -> String {
@@ -792,6 +850,7 @@ private struct TranscriptTranslationNormalizer {
 
     private static func isTerminalPunctuation(_ character: Character) -> Bool {
         character == "." || character == "?" || character == "!"
+            || character == "。" || character == "؟" || character == "！"
     }
 
     private static func isSentenceBoundary(after index: String.Index, in text: String) -> Bool {
@@ -846,12 +905,25 @@ private func shouldFlush(
     if pending.segmentCount >= endpointing.maximumBufferedSegments {
         return true
     }
-    if endpointing.flushOnTerminalPunctuation,
-       pending.wordCount >= endpointing.minimumWordsForPunctuationEndpoint,
-       pending.endsWithTerminalPunctuation {
-        return true
-    }
     return false
+}
+
+@discardableResult
+private func flushCompletedPending(
+    _ pending: inout PendingSentence,
+    at index: Int,
+    minimumWords: Int,
+    synthesisQueue: LiveSynthesisQueue,
+    sourceLanguageCode: String?
+) async -> Bool {
+    guard let transcript = pending.drainCompletedTranscript(
+        fallbackLanguageCode: sourceLanguageCode,
+        minimumWords: minimumWords
+    ) else {
+        return false
+    }
+    await synthesisQueue.enqueue(index: index, transcript: transcript)
+    return true
 }
 
 @discardableResult
@@ -1017,9 +1089,19 @@ private struct SlidingASRStabilizer {
             committedWords,
             in: candidateWords
         ) {
+            let punctuationDelta = Self.newTerminalPunctuation(
+                from: committedWords,
+                to: candidateWords
+            )
             committedWords = candidateWords
-            guard deltaWords.isEmpty == false else {
-                return nil
+            if deltaWords.isEmpty {
+                return punctuationDelta.map {
+                    HeptapodTranscriptSegment(
+                        text: String($0),
+                        languageCode: languageCode,
+                        isFinal: true
+                    )
+                }
             }
             return HeptapodTranscriptSegment(
                 text: deltaWords.joined(separator: " "),
@@ -1033,9 +1115,19 @@ private struct SlidingASRStabilizer {
             in: committedWords
         ) {
             let deltaWords = Array(candidateWords.dropFirst(overlap.count))
+            let punctuationDelta = Self.newTerminalPunctuation(
+                from: committedWords,
+                to: candidateWords
+            )
             committedWords = candidateWords
-            guard deltaWords.isEmpty == false else {
-                return nil
+            if deltaWords.isEmpty {
+                return punctuationDelta.map {
+                    HeptapodTranscriptSegment(
+                        text: String($0),
+                        languageCode: languageCode,
+                        isFinal: true
+                    )
+                }
             }
             return HeptapodTranscriptSegment(
                 text: deltaWords.joined(separator: " "),
@@ -1075,9 +1167,18 @@ private struct SlidingASRStabilizer {
             guard wordsMatch(left, right) else {
                 break
             }
-            result.append(right)
+            result.append(stableWord(left, right))
         }
         return result
+    }
+
+    private static func stableWord(_ lhs: String, _ rhs: String) -> String {
+        let leftPunctuation = trailingTerminalPunctuation(in: lhs)
+        let rightPunctuation = trailingTerminalPunctuation(in: rhs)
+        guard leftPunctuation == rightPunctuation else {
+            return removingTrailingTerminalPunctuation(from: rhs)
+        }
+        return rhs
     }
 
     private static func isPrefix(_ prefix: [String], of words: [String]) -> Bool {
@@ -1246,6 +1347,40 @@ private struct SlidingASRStabilizer {
         word.trimmingCharacters(in: .punctuationCharacters).lowercased()
     }
 
+    private static func newTerminalPunctuation(
+        from committedWords: [String],
+        to candidateWords: [String]
+    ) -> Character? {
+        guard committedWords.count == candidateWords.count,
+              committedWords.isEmpty == false,
+              zip(committedWords, candidateWords).allSatisfy({ wordsMatch($0.0, $0.1) }),
+              let committedLast = committedWords.last,
+              trailingTerminalPunctuation(in: committedLast) == nil,
+              let candidateLast = candidateWords.last else {
+            return nil
+        }
+        return trailingTerminalPunctuation(in: candidateLast)
+    }
+
+    private static func trailingTerminalPunctuation(in word: String) -> Character? {
+        guard let last = word.last, isTerminalPunctuation(last) else {
+            return nil
+        }
+        return last
+    }
+
+    private static func removingTrailingTerminalPunctuation(from word: String) -> String {
+        guard trailingTerminalPunctuation(in: word) != nil else {
+            return word
+        }
+        return String(word.dropLast())
+    }
+
+    private static func isTerminalPunctuation(_ character: Character) -> Bool {
+        character == "." || character == "?" || character == "!"
+            || character == "。" || character == "؟" || character == "！"
+    }
+
     private static func combine(_ chunks: [HeptapodAudioChunk]) -> HeptapodAudioChunk {
         guard let first = chunks.first else {
             return HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
@@ -1267,6 +1402,7 @@ private actor LiveSynthesisQueue {
     private let continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
     private let outputMode: HeptapodLiveOutputMode
     private var tail: Task<Void, Error>?
+    private var queuedOutputCount = 0
 
     init(
         pipeline: HeptapodSpeechToSpeechPipeline,
@@ -1290,42 +1426,53 @@ private actor LiveSynthesisQueue {
         if outputMode == .speech {
             continuation.yield(.transcript(index: index, transcript))
         }
+        queuedOutputCount += 1
+        continuation.yield(.outputQueued(index: index, backlog: queuedOutputCount))
         let previous = tail
         tail = Task {
-            try await previous?.value
-            try Task.checkCancellation()
-            switch outputMode {
-            case .speech:
+            do {
+                try await previous?.value
+                try Task.checkCancellation()
+                continuation.yield(.translationStarted(index: index))
                 let translation = try await pipeline.translateTranscript(
                     transcript,
                     sourceLanguageCode: sourceLanguageCode,
                     targetLanguageCode: targetLanguageCode
                 )
-                let speech = try await synthesizeForLivePlayback(
-                    pipeline: pipeline,
-                    translation: translation,
-                    voiceID: voiceID,
-                    index: index,
-                    playbackQueue: playbackQueue
-                )
-                let result = HeptapodSpeechToSpeechResult(
-                    transcript: transcript,
-                    translation: translation,
-                    speech: speech
-                )
-                continuation.yield(.result(index: index, result))
-            case .textOnly:
-                let translation = try await pipeline.translateTranscript(
-                    transcript,
-                    sourceLanguageCode: sourceLanguageCode,
-                    targetLanguageCode: targetLanguageCode
-                )
-                continuation.yield(.translation(
-                    index: index,
-                    HeptapodLiveTranslationResult(transcript: transcript, translation: translation)
-                ))
+                continuation.yield(.translationCompleted(index: index))
+
+                switch outputMode {
+                case .speech:
+                    continuation.yield(.synthesisStarted(index: index))
+                    let speech = try await synthesizeForLivePlayback(
+                        pipeline: pipeline,
+                        translation: translation,
+                        voiceID: voiceID,
+                        index: index,
+                        playbackQueue: playbackQueue
+                    )
+                    let result = HeptapodSpeechToSpeechResult(
+                        transcript: transcript,
+                        translation: translation,
+                        speech: speech
+                    )
+                    continuation.yield(.result(index: index, result))
+                case .textOnly:
+                    continuation.yield(.translation(
+                        index: index,
+                        HeptapodLiveTranslationResult(transcript: transcript, translation: translation)
+                    ))
+                }
+                await outputFinished()
+            } catch {
+                await outputFinished()
+                throw error
             }
         }
+    }
+
+    private func outputFinished() {
+        queuedOutputCount = max(0, queuedOutputCount - 1)
     }
 
     func drain() async throws {
@@ -1360,6 +1507,7 @@ private actor LivePlaybackQueue {
         }
 
         queuedSegmentCount += 1
+        continuation.yield(.playbackQueued(index: index, backlog: queuedSegmentCount))
         let previous = tail
         tail = Task {
             do {
