@@ -1012,7 +1012,10 @@ private struct DemoOptions {
         case .none:
             nil
         case .glossary:
-            HeptapodTerminologyPostEditor.englishToTurkishLiveSpeech
+            HeptapodTerminologyPostEditor.liveSpeechProfile(
+                sourceLanguageCode: sourceLanguageCode ?? "en",
+                targetLanguageCode: targetLanguageCode ?? "tr"
+            )
         }
     }
 }

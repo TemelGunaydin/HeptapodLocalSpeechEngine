@@ -55,10 +55,20 @@ net ve doğal duyulmalı.` before synthesis. All three sentences reached output.
 
 - Keep Apple Translation as the preferred EN-to-TR base translator.
 - Enable the deterministic source-gated glossary in the live CLI by default.
-- Keep a bounded two-item context interface in the core pipeline for a future
-  post-editor, but do not attach Qwen to live translation.
+- Use the bounded two-item context for deterministic technical-term consistency.
+  Context is tagged and filtered by language pair, and concurrent calls are
+  serialized so accepted history stays in source order.
+- Select this terminology profile only for EN-to-TR. Other language pairs keep
+  the generic pipeline but bypass the Turkish rules.
+- Do not attach Qwen to live translation.
 - Keep Qwen and Apple Foundation Models as explicit experiments only.
 - Permit `--mt-postedit none` for raw backend comparisons.
+
+The contextual terminology update was regression-tested on 2026-08-10. All 24
+fixed EN-to-TR outputs remained byte-for-byte identical to the accepted glossary
+report; the final verification averaged 0.0062 seconds and reached 0.0093
+seconds maximum. Dedicated tests verify matching-context reuse, language-pair
+isolation, whole-word replacement, and concurrent context ordering.
 
 ## Reproduction
 

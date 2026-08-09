@@ -69,8 +69,15 @@ The pipeline owns:
 The optional translation post-edit wrapper owns:
 
 - retaining only the configured number of accepted source/translation pairs,
+- tagging and filtering history by source/target language pair,
+- serializing translation calls so accepted context remains in source order,
 - applying a post-editor after the base translator,
 - falling back to the original draft if an optional post-editor fails.
+
+Post-edit profiles are language-pair specific. The current deterministic
+EN-to-TR profile can reuse previously accepted technical terminology, while an
+EN-to-ES session bypasses those Turkish rules and keeps the rest of the pipeline
+unchanged.
 
 The live session owns:
 

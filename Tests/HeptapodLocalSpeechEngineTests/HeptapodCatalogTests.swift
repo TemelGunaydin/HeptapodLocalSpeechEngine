@@ -256,6 +256,92 @@ func terminologyPostEditorAppliesOnlyWhenSourceAndDraftMatch() async throws {
 }
 
 @Test
+func terminologyPostEditorSelectsOnlyItsSupportedLanguagePair() {
+    let turkishProfile = HeptapodTerminologyPostEditor.liveSpeechProfile(
+        sourceLanguageCode: "en-US",
+        targetLanguageCode: "tr-TR"
+    )
+    let spanishProfile = HeptapodTerminologyPostEditor.liveSpeechProfile(
+        sourceLanguageCode: "en",
+        targetLanguageCode: "es"
+    )
+
+    #expect(turkishProfile != nil)
+    #expect(spanishProfile == nil)
+}
+
+@Test
+func terminologyPostEditorReusesAcceptedTermInMatchingLanguageContext() async throws {
+    let postEditor = HeptapodTerminologyPostEditor.englishToTurkishLiveSpeech
+    let draft = HeptapodTranslatedText(
+        sourceText: "The next segment starts now.",
+        translatedText: "Sonraki bölüm şimdi başlıyor.",
+        sourceLanguageCode: "en-US",
+        targetLanguageCode: "tr-TR"
+    )
+    let context = [
+        HeptapodTranslationContextItem(
+            sourceText: "The first segment is ready.",
+            acceptedTranslation: "İlk segment hazır.",
+            sourceLanguageCode: "en",
+            targetLanguageCode: "tr"
+        )
+    ]
+
+    let withoutContext = try await postEditor.edit(draft, context: [])
+    let withContext = try await postEditor.edit(draft, context: context)
+
+    #expect(withoutContext == draft.translatedText)
+    #expect(withContext == "Sonraki segment şimdi başlıyor.")
+}
+
+@Test
+func terminologyPostEditorDoesNotReuseContextFromAnotherLanguagePair() async throws {
+    let postEditor = HeptapodTerminologyPostEditor.englishToTurkishLiveSpeech
+    let draft = HeptapodTranslatedText(
+        sourceText: "The next segment starts now.",
+        translatedText: "Sonraki bölüm şimdi başlıyor.",
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let spanishContext = [
+        HeptapodTranslationContextItem(
+            sourceText: "The first segment is ready.",
+            acceptedTranslation: "El primer segment está listo.",
+            sourceLanguageCode: "en",
+            targetLanguageCode: "es"
+        )
+    ]
+
+    let edited = try await postEditor.edit(draft, context: spanishContext)
+
+    #expect(edited == draft.translatedText)
+}
+
+@Test
+func terminologyPostEditorDoesNotReplaceInsideInflectedWords() async throws {
+    let postEditor = HeptapodTerminologyPostEditor.englishToTurkishLiveSpeech
+    let draft = HeptapodTranslatedText(
+        sourceText: "We replayed the segment.",
+        translatedText: "Bu bölümü yeniden oynattık.",
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let context = [
+        HeptapodTranslationContextItem(
+            sourceText: "The first segment is ready.",
+            acceptedTranslation: "İlk segment hazır.",
+            sourceLanguageCode: "en",
+            targetLanguageCode: "tr"
+        )
+    ]
+
+    let edited = try await postEditor.edit(draft, context: context)
+
+    #expect(edited == draft.translatedText)
+}
+
+@Test
 func postEditingTranslatorKeepsOnlyBoundedAcceptedContext() async throws {
     let postEditor = ContextRecordingPostEditor()
     let translator = HeptapodPostEditingTranslator(
@@ -272,6 +358,49 @@ func postEditingTranslatorKeepsOnlyBoundedAcceptedContext() async throws {
     let contexts = await postEditor.recordedContexts()
     #expect(contexts.map { $0.map(\.sourceText) } == [[], ["one"], ["one", "two"], ["two", "three"]])
     #expect(await translator.context().map(\.sourceText) == ["three", "four"])
+}
+
+@Test
+func postEditingTranslatorPassesOnlyMatchingLanguagePairContext() async throws {
+    let postEditor = ContextRecordingPostEditor()
+    let translator = HeptapodPostEditingTranslator(
+        translator: EchoTranslator(),
+        postEditor: postEditor,
+        contextLimit: 4
+    )
+
+    _ = try await translator.translate("bir", sourceLanguageCode: "en", targetLanguageCode: "tr")
+    _ = try await translator.translate("uno", sourceLanguageCode: "en", targetLanguageCode: "es")
+    _ = try await translator.translate("iki", sourceLanguageCode: "en", targetLanguageCode: "tr")
+
+    let contexts = await postEditor.recordedContexts()
+    #expect(contexts.map { $0.map(\.sourceText) } == [[], [], ["bir"]])
+}
+
+@Test
+func postEditingTranslatorSerializesConcurrentContextUpdates() async throws {
+    let probe = TranslationStartProbe()
+    let postEditor = ContextRecordingPostEditor()
+    let translator = HeptapodPostEditingTranslator(
+        translator: DelayedFirstEchoTranslator(probe: probe),
+        postEditor: postEditor,
+        contextLimit: 2
+    )
+
+    let first = Task {
+        try await translator.translate("one", sourceLanguageCode: "en", targetLanguageCode: "tr")
+    }
+    await probe.waitUntilStarted()
+    let second = Task {
+        try await translator.translate("two", sourceLanguageCode: "en", targetLanguageCode: "tr")
+    }
+
+    _ = try await first.value
+    _ = try await second.value
+
+    let contexts = await postEditor.recordedContexts()
+    #expect(contexts.map { $0.map(\.sourceText) } == [[], ["one"]])
+    #expect(await translator.context().map(\.sourceText) == ["one", "two"])
 }
 
 @Test
@@ -2234,6 +2363,53 @@ private struct EchoTranslator: HeptapodTextTranslator {
         targetLanguageCode: String
     ) async throws -> HeptapodTranslatedText {
         HeptapodTranslatedText(
+            sourceText: text,
+            translatedText: text,
+            sourceLanguageCode: sourceLanguageCode,
+            targetLanguageCode: targetLanguageCode
+        )
+    }
+}
+
+private actor TranslationStartProbe {
+    private var hasStarted = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func markStarted() {
+        hasStarted = true
+        let continuations = waiters
+        waiters.removeAll()
+        for continuation in continuations {
+            continuation.resume()
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard hasStarted == false else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+}
+
+private struct DelayedFirstEchoTranslator: HeptapodTextTranslator {
+    let descriptor = HeptapodModelDescriptor.madladTranslator
+    let probe: TranslationStartProbe
+
+    func prepare() async throws {}
+
+    func translate(
+        _ text: String,
+        sourceLanguageCode: String?,
+        targetLanguageCode: String
+    ) async throws -> HeptapodTranslatedText {
+        if text == "one" {
+            await probe.markStarted()
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return HeptapodTranslatedText(
             sourceText: text,
             translatedText: text,
             sourceLanguageCode: sourceLanguageCode,

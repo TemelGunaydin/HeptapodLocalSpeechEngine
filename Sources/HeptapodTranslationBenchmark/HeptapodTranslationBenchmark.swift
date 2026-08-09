@@ -441,8 +441,6 @@ private protocol TranslationPostEditor: Sendable {
 }
 
 private struct GlossaryBenchmarkPostEditor: TranslationPostEditor {
-    private let postEditor = HeptapodTerminologyPostEditor.englishToTurkishLiveSpeech
-
     func prepare(targetLanguageCode: String) async throws {}
 
     func edit(
@@ -452,7 +450,13 @@ private struct GlossaryBenchmarkPostEditor: TranslationPostEditor {
         targetLanguageCode: String,
         context: [BenchmarkTranslationContextItem]
     ) async throws -> String {
-        try await postEditor.edit(
+        guard let postEditor = HeptapodTerminologyPostEditor.liveSpeechProfile(
+            sourceLanguageCode: sourceLanguageCode,
+            targetLanguageCode: targetLanguageCode
+        ) else {
+            return draftTranslation
+        }
+        return try await postEditor.edit(
             HeptapodTranslatedText(
                 sourceText: sourceText,
                 translatedText: draftTranslation,
@@ -462,7 +466,9 @@ private struct GlossaryBenchmarkPostEditor: TranslationPostEditor {
             context: context.map {
                 HeptapodTranslationContextItem(
                     sourceText: $0.sourceText,
-                    acceptedTranslation: $0.acceptedTranslation
+                    acceptedTranslation: $0.acceptedTranslation,
+                    sourceLanguageCode: sourceLanguageCode,
+                    targetLanguageCode: targetLanguageCode
                 )
             }
         )

@@ -46,7 +46,7 @@ Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + MOSS-TTS-Nano
 Natural voice:
 
 ```text
-Silero VAD + Qwen3 ASR 0.6B + Apple Translation + source-gated glossary + Chatterbox MLX
+Silero VAD + Qwen3 ASR 0.6B + Apple Translation + language-pair terminology profile + Chatterbox MLX
 ```
 
 Future/research:

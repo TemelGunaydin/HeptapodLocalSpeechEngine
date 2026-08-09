@@ -63,8 +63,9 @@ errors such as `kesilmesiz` and `deneyim kabul edilebilir`.
   experiment found that Qwen 4B still regressed meaning, while a deterministic
   source-gated glossary corrected domain terms with negligible latency. See
   `2026-08-09-contextual-postedit-en-tr.md`.
-- Use the glossary for measured EN-to-TR terminology fixes and keep the generic
-  two-item context interface available for future post-edit experiments.
+- Use the EN-to-TR profile for measured terminology fixes and bounded
+  same-language-pair term consistency. Other language pairs bypass its Turkish
+  rules while retaining the generic post-edit interface.
 
 ## Reproduction
 

@@ -3,10 +3,19 @@ import Foundation
 public struct HeptapodTranslationContextItem: Equatable, Sendable {
     public let sourceText: String
     public let acceptedTranslation: String
+    public let sourceLanguageCode: String?
+    public let targetLanguageCode: String?
 
-    public init(sourceText: String, acceptedTranslation: String) {
+    public init(
+        sourceText: String,
+        acceptedTranslation: String,
+        sourceLanguageCode: String? = nil,
+        targetLanguageCode: String? = nil
+    ) {
         self.sourceText = sourceText
         self.acceptedTranslation = acceptedTranslation
+        self.sourceLanguageCode = sourceLanguageCode
+        self.targetLanguageCode = targetLanguageCode
     }
 }
 
@@ -37,6 +46,8 @@ public actor HeptapodPostEditingTranslator: HeptapodTextTranslator {
     private let failurePolicy: HeptapodPostEditFailurePolicy
     private var history: [HeptapodTranslationContextItem] = []
     private var isPostEditorReady = true
+    private var isTranslationInProgress = false
+    private var translationWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(
         translator: any HeptapodTextTranslator,
@@ -71,6 +82,10 @@ public actor HeptapodPostEditingTranslator: HeptapodTextTranslator {
         sourceLanguageCode: String?,
         targetLanguageCode: String
     ) async throws -> HeptapodTranslatedText {
+        await acquireTranslationSlot()
+        defer { releaseTranslationSlot() }
+        try Task.checkCancellation()
+
         let draft = try await translator.translate(
             text,
             sourceLanguageCode: sourceLanguageCode,
@@ -80,7 +95,10 @@ public actor HeptapodPostEditingTranslator: HeptapodTextTranslator {
         let editedText: String
         if isPostEditorReady {
             do {
-                let candidate = try await postEditor.edit(draft, context: history)
+                let candidate = try await postEditor.edit(
+                    draft,
+                    context: matchingContext(for: draft)
+                )
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard candidate.isEmpty == false else {
                     throw HeptapodPostEditError.emptyResult
@@ -116,6 +134,36 @@ public actor HeptapodPostEditingTranslator: HeptapodTextTranslator {
         history
     }
 
+    private func acquireTranslationSlot() async {
+        guard isTranslationInProgress else {
+            isTranslationInProgress = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            translationWaiters.append(continuation)
+        }
+    }
+
+    private func releaseTranslationSlot() {
+        guard translationWaiters.isEmpty == false else {
+            isTranslationInProgress = false
+            return
+        }
+        translationWaiters.removeFirst().resume()
+    }
+
+    private func matchingContext(
+        for draft: HeptapodTranslatedText
+    ) -> [HeptapodTranslationContextItem] {
+        history.filter { item in
+            languageCodesMatch(item.targetLanguageCode, draft.targetLanguageCode)
+                && languageCodesMatchWhenKnown(
+                    item.sourceLanguageCode,
+                    draft.sourceLanguageCode
+                )
+        }
+    }
+
     private func remember(_ translation: HeptapodTranslatedText) {
         guard contextLimit > 0 else {
             return
@@ -123,7 +171,9 @@ public actor HeptapodPostEditingTranslator: HeptapodTextTranslator {
         history.append(
             HeptapodTranslationContextItem(
                 sourceText: translation.sourceText,
-                acceptedTranslation: translation.translatedText
+                acceptedTranslation: translation.translatedText,
+                sourceLanguageCode: translation.sourceLanguageCode,
+                targetLanguageCode: translation.targetLanguageCode
             )
         )
         if history.count > contextLimit {
@@ -149,29 +199,36 @@ public struct HeptapodTranslationReplacementRule: Equatable, Sendable {
     public let sourcePhrase: String
     public let draftPhrase: String
     public let replacement: String
+    public let requiresMatchingContext: Bool
 
     public init(
         sourceLanguageCode: String,
         targetLanguageCode: String,
         sourcePhrase: String,
         draftPhrase: String,
-        replacement: String
+        replacement: String,
+        requiresMatchingContext: Bool = false
     ) {
         self.sourceLanguageCode = sourceLanguageCode
         self.targetLanguageCode = targetLanguageCode
         self.sourcePhrase = sourcePhrase
         self.draftPhrase = draftPhrase
         self.replacement = replacement
+        self.requiresMatchingContext = requiresMatchingContext
     }
 
-    fileprivate func apply(to draft: HeptapodTranslatedText) -> String? {
-        guard languageRoot(draft.sourceLanguageCode) == languageRoot(sourceLanguageCode),
-              languageRoot(draft.targetLanguageCode) == languageRoot(targetLanguageCode),
+    fileprivate func apply(
+        to draft: HeptapodTranslatedText,
+        context: [HeptapodTranslationContextItem]
+    ) -> String? {
+        guard languageCodesMatch(draft.sourceLanguageCode, sourceLanguageCode),
+              languageCodesMatch(draft.targetLanguageCode, targetLanguageCode),
               sourceContainsPhrase(draft.sourceText),
-              draft.translatedText.contains(draftPhrase) else {
+              requiresMatchingContext == false || hasMatchingContext(context),
+              let replaced = replacingDraftPhrase(in: draft.translatedText) else {
             return nil
         }
-        return draft.translatedText.replacingOccurrences(of: draftPhrase, with: replacement)
+        return replaced
     }
 
     private func sourceContainsPhrase(_ sourceText: String) -> Bool {
@@ -183,12 +240,35 @@ public struct HeptapodTranslationReplacementRule: Equatable, Sendable {
         ) != nil
     }
 
-    private func languageRoot(_ languageCode: String?) -> String? {
-        languageCode?
-            .replacingOccurrences(of: "_", with: "-")
-            .split(separator: "-", maxSplits: 1)
-            .first
-            .map { String($0).lowercased() }
+    private func hasMatchingContext(
+        _ context: [HeptapodTranslationContextItem]
+    ) -> Bool {
+        context.reversed().contains { item in
+            languageCodesMatchWhenKnown(item.sourceLanguageCode, sourceLanguageCode)
+                && languageCodesMatchWhenKnown(item.targetLanguageCode, targetLanguageCode)
+                && sourceContainsPhrase(item.sourceText)
+                && item.acceptedTranslation.range(
+                    of: replacement,
+                    options: [.caseInsensitive, .diacriticInsensitive]
+                ) != nil
+        }
+    }
+
+    private func replacingDraftPhrase(in text: String) -> String? {
+        let phrase = NSRegularExpression.escapedPattern(for: draftPhrase)
+        let pattern = "(?<![\\p{L}\\p{N}])\(phrase)(?![\\p{L}\\p{N}])"
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              expression.firstMatch(
+                in: text,
+                range: NSRange(text.startIndex..., in: text)
+              ) != nil else {
+            return nil
+        }
+        return expression.stringByReplacingMatches(
+            in: text,
+            range: NSRange(text.startIndex..., in: text),
+            withTemplate: NSRegularExpression.escapedTemplate(for: replacement)
+        )
     }
 }
 
@@ -205,7 +285,7 @@ public struct HeptapodTerminologyPostEditor: HeptapodTranslationPostEditor {
     ) async throws -> String {
         var edited = draft
         for rule in rules {
-            guard let replacement = rule.apply(to: edited) else {
+            guard let replacement = rule.apply(to: edited, context: context) else {
                 continue
             }
             edited = HeptapodTranslatedText(
@@ -220,6 +300,17 @@ public struct HeptapodTerminologyPostEditor: HeptapodTranslationPostEditor {
 }
 
 public extension HeptapodTerminologyPostEditor {
+    static func liveSpeechProfile(
+        sourceLanguageCode: String?,
+        targetLanguageCode: String
+    ) -> HeptapodTerminologyPostEditor? {
+        guard languageCodesMatch(sourceLanguageCode, "en"),
+              languageCodesMatch(targetLanguageCode, "tr") else {
+            return nil
+        }
+        return .englishToTurkishLiveSpeech
+    }
+
     static let englishToTurkishLiveSpeech = HeptapodTerminologyPostEditor(
         rules: [
             rule("translated voice should sound clear and natural", "Çevrilen ses", "Çevrilmiş ses"),
@@ -239,7 +330,16 @@ public extension HeptapodTerminologyPostEditor {
                 "translated speech could begin",
                 "tercüme edilen konuşmanın başlayabilmesi için",
                 "çevrilmiş konuşma başlayabilsin diye"
-            )
+            ),
+            contextRule("segment", "Bölüm", "Segment"),
+            contextRule("segment", "bölüm", "segment"),
+            contextRule("segments", "Bölümler", "Segmentler"),
+            contextRule("segments", "bölümler", "segmentler"),
+            contextRule("transcript", "konuşma metni", "transkript"),
+            contextRule("transcripts", "konuşma metinleri", "transkriptler"),
+            contextRule("live translation", "canlı tercüme", "canlı çeviri"),
+            contextRule("speech synthesis", "Konuşma sentezi", "Ses sentezi"),
+            contextRule("speech synthesis", "konuşma sentezi", "ses sentezi")
         ]
     )
 
@@ -256,4 +356,41 @@ public extension HeptapodTerminologyPostEditor {
             replacement: replacement
         )
     }
+
+    private static func contextRule(
+        _ sourcePhrase: String,
+        _ draftPhrase: String,
+        _ replacement: String
+    ) -> HeptapodTranslationReplacementRule {
+        HeptapodTranslationReplacementRule(
+            sourceLanguageCode: "en",
+            targetLanguageCode: "tr",
+            sourcePhrase: sourcePhrase,
+            draftPhrase: draftPhrase,
+            replacement: replacement,
+            requiresMatchingContext: true
+        )
+    }
+}
+
+private func languageCodesMatch(_ lhs: String?, _ rhs: String?) -> Bool {
+    guard let lhsRoot = languageRoot(lhs), let rhsRoot = languageRoot(rhs) else {
+        return false
+    }
+    return lhsRoot == rhsRoot
+}
+
+private func languageCodesMatchWhenKnown(_ lhs: String?, _ rhs: String?) -> Bool {
+    guard lhs != nil, rhs != nil else {
+        return true
+    }
+    return languageCodesMatch(lhs, rhs)
+}
+
+private func languageRoot(_ languageCode: String?) -> String? {
+    languageCode?
+        .replacingOccurrences(of: "_", with: "-")
+        .split(separator: "-", maxSplits: 1)
+        .first
+        .map { String($0).lowercased() }
 }

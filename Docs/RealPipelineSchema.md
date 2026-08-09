@@ -38,7 +38,7 @@ flowchart LR
 | Translation | MADLAD-400 3B int4 | MLX Swift | `aufklarer/MADLAD400-3B-MT-MLX` | Broad multilingual text translation; large first download. |
 | Translation alternative | Apple Translation | System framework | `mt.apple.translation.on_device` | On-device quality/latency mode on macOS 26+; requires installed language assets. |
 | Translation experiment | TranslateGemma 4B 4-bit | Python/MLX | `mlx-community/translategemma-4b-it-4bit` | Persistent local worker; experimental after EN-to-TR quality comparison. |
-| Live post-edit | Source-gated terminology glossary | Swift | Built in | Exact source/draft phrase corrections; bounded two-item context wrapper; no second model pass. |
+| Live post-edit | Language-pair terminology profile | Swift | Built in | Exact source/draft phrase corrections plus bounded same-pair term consistency; no second model pass. |
 | TTS | Kokoro 82M | CoreML path via `speech-swift` | `aufklarer/Kokoro-82M-CoreML` | Good small smoke-test TTS. Turkish phonemizer is not currently supported. |
 | Report | `DemoReport` JSON | Foundation | `/tmp/heptapod-real-report.json` | Stores timings, text outputs, audio durations, models, and file paths. |
 

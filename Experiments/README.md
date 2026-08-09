@@ -109,7 +109,8 @@ xcrun swift run HeptapodTranslationBenchmark -- \
 
 The backend can be `apple`, `madlad`, or `translategemma`. Add `--postedit
 glossary --postedit-context 2` to measure the deterministic EN-to-TR post-edit
-stage, or `--postedit apple-foundation` to experiment with the on-device Apple
+stage, including same-language-pair contextual terminology, or `--postedit
+apple-foundation` to experiment with the on-device Apple
 Foundation Model when Apple Intelligence is enabled. The committed 2026-08-09
 comparisons and raw outputs are under `Results/`.
 

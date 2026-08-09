@@ -232,7 +232,11 @@ experiment rather than the default live backend. See
 Live EN-to-TR runs also apply a deterministic terminology post-editor by
 default. A replacement occurs only when both its English source phrase and the
 exact Turkish draft phrase match, so it does not ask a second model to rewrite
-already-correct sentences. Disable it for raw backend comparisons:
+already-correct sentences. The previous two accepted sentence pairs are tagged
+with their language pair. A small set of technical terms such as `segment`,
+`transcript`, and `speech synthesis` is reused only after that preferred Turkish
+term has already appeared in matching EN-to-TR context. Disable it for raw
+backend comparisons:
 
 ```bash
 Tools/run_live_translation.sh \
@@ -240,10 +244,23 @@ Tools/run_live_translation.sh \
   --mt-postedit none
 ```
 
-The core post-edit wrapper retains at most the previous two accepted sentence
-pairs for future contextual editors. A measured Qwen 4B experiment added about
-0.60 seconds per sentence and still introduced meaning regressions, so it is
-not connected to live output. See
+The core post-edit wrapper serializes context updates and passes only history
+from the same source/target language pair. Turkish rules are selected only for
+EN-to-TR; for example, EN-to-ES uses the same endpointing, translation, and
+audio queues without applying any Turkish replacements:
+
+```bash
+Tools/run_live_translation.sh \
+  --from en \
+  --to es \
+  --mt apple
+```
+
+The Apple source/target language assets must be installed for that pair. Other
+pairs can add their own measured terminology profile without changing the
+pipeline API. A measured Qwen 4B post-editor added about 0.60 seconds per
+sentence and still introduced meaning regressions, so it is not connected to
+live output. See
 [`2026-08-09-contextual-postedit-en-tr.md`](Experiments/Results/2026-08-09-contextual-postedit-en-tr.md).
 
 The launcher intentionally uses `xcrun swift`, so the Swift compiler and macOS
@@ -625,7 +642,7 @@ Useful advanced metrics:
    - Adds local text translation behind `HeptapodTextTranslator`.
    - Apple Translation is the measured EN-to-TR quality/latency option on macOS 26+; MADLAD remains the portable model-backed fallback.
    - TranslateGemma remains experimental after the fixed EN-to-TR comparison.
-   - The source-gated terminology post-editor fixes measured domain terms without a second model pass.
+   - Language-pair profiles provide source-gated terminology and bounded contextual term consistency without a second model pass.
 
 3. `HeptapodKokoroTTSAdapter`
    - Status: ready in `HeptapodSpeechSwiftAdapters`.
