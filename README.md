@@ -79,6 +79,7 @@ HeptapodLocalSpeechEngine/
       Pipeline/
         HeptapodPipelineConfiguration.swift
         HeptapodSpeechToSpeechPipeline.swift
+        HeptapodTranslationPostEditing.swift
       Adapters/
         HeptapodUnavailableAdapterFactory.swift
         UnavailableModelAdapters.swift
@@ -89,6 +90,7 @@ HeptapodLocalSpeechEngine/
       HeptapodQwen3ASRAdapter.swift
       HeptapodMADLADTranslatorAdapter.swift
       HeptapodAppleTranslationAdapter.swift
+      HeptapodTranslateGemmaTranslatorAdapter.swift
       HeptapodKokoroTTSAdapter.swift
       HeptapodChatterboxTTSAdapter.swift
       HeptapodMossTTSNanoAdapter.swift
@@ -98,6 +100,8 @@ HeptapodLocalSpeechEngine/
       main.swift
     HeptapodRealSpeechDemo/
       main.swift
+    HeptapodTranslationBenchmark/
+      HeptapodTranslationBenchmark.swift
   Tests/
     HeptapodLocalSpeechEngineTests/
       HeptapodCatalogTests.swift
@@ -119,6 +123,7 @@ The core protocols are:
 - `HeptapodVoiceActivityDetector`: skips silence and avoids wasting compute.
 - `HeptapodSpeechRecognizer`: audio to source text.
 - `HeptapodTextTranslator`: source text to target text.
+- `HeptapodTranslationPostEditor`: optional bounded-context correction after translation.
 - `HeptapodSpeechSynthesizer`: target text to target speech.
 - `HeptapodDirectSpeechTranslator`: optional research path for direct speech-to-speech.
 
@@ -207,6 +212,39 @@ The source/target language pair must already be installed in the system
 Translation settings. This path uses the
 [Apple Translation framework](https://developer.apple.com/documentation/translation)
 and does not download or load MADLAD weights.
+
+TranslateGemma 4B is also available as an experimental local MLX backend:
+
+```bash
+Tools/setup_translategemma_mlx.sh
+
+Tools/run_live_translation.sh \
+  --from en \
+  --to tr \
+  --mt translategemma
+```
+
+In the fixed EN-to-TR quality fixture, TranslateGemma was much faster than
+MADLAD but less reliable than Apple Translation. It remains an explicit
+experiment rather than the default live backend. See
+[`2026-08-09-apple-madlad-translategemma-en-tr.md`](Experiments/Results/2026-08-09-apple-madlad-translategemma-en-tr.md).
+
+Live EN-to-TR runs also apply a deterministic terminology post-editor by
+default. A replacement occurs only when both its English source phrase and the
+exact Turkish draft phrase match, so it does not ask a second model to rewrite
+already-correct sentences. Disable it for raw backend comparisons:
+
+```bash
+Tools/run_live_translation.sh \
+  --mt apple \
+  --mt-postedit none
+```
+
+The core post-edit wrapper retains at most the previous two accepted sentence
+pairs for future contextual editors. A measured Qwen 4B experiment added about
+0.60 seconds per sentence and still introduced meaning regressions, so it is
+not connected to live output. See
+[`2026-08-09-contextual-postedit-en-tr.md`](Experiments/Results/2026-08-09-contextual-postedit-en-tr.md).
 
 The launcher intentionally uses `xcrun swift`, so the Swift compiler and macOS
 SDK come from the same active Xcode toolchain. A bare `swift` command may resolve
@@ -326,6 +364,17 @@ Tools/run_live_translation.sh \
   --tts chatterbox-mlx
 ```
 
+Chatterbox quality/prosody can be tuned without restarting its persistent
+worker:
+
+```bash
+Tools/run_live_translation.sh \
+  --tts chatterbox-mlx \
+  --tts-exaggeration 0.5 \
+  --tts-cfg-weight 0.5 \
+  --tts-temperature 0.8
+```
+
 Both backends keep their model loaded in a persistent worker. MOSS streams
 48 kHz PCM chunks and keeps Metal available for ASR/MT by using ONNX Runtime on
 CPU. Chatterbox MLX warms its Metal path before capture starts, generates
@@ -333,6 +382,11 @@ natural sentence-sized 24 kHz batches, and sends the first sentence to playback
 while the next one is synthesized. Excess boundary silence is trimmed and each
 batch receives a short edge fade. Pass `--tts-one-shot` only for Chatterbox
 bridge debugging.
+
+The neutral Chatterbox defaults are `0.5` exaggeration, `0.5` CFG weight, and
+`0.8` temperature. A reproducible four-preset Turkish listening matrix is
+available through `Tools/chatterbox_quality_matrix.py`; see
+[`2026-08-09-chatterbox-prosody-matrix-tr.md`](Experiments/Results/2026-08-09-chatterbox-prosody-matrix-tr.md).
 
 On the tested M3 Max, MOSS produced its first PCM 1.40 seconds after ASR and
 finished at 3.36 seconds. Chatterbox MLX produced its complete higher-quality
@@ -368,10 +422,11 @@ HF_DOWNLOAD_STALL_TIMEOUT=600 xcrun swift run HeptapodRealSpeechDemo -- \
 The file input path can point to WAV, M4A, MP3, or CAF audio that AVFoundation
 can decode locally.
 
-The real demo uses Qwen3-ASR and either MADLAD-400 or Apple Translation through the
-`HeptapodSpeechSwiftAdapters` target, which wraps `speech-swift`. The live demo
-adds MOSS streaming, Chatterbox MLX quality output, native macOS voices, Kokoro,
-and the older PyTorch Chatterbox bridge.
+The real demo uses Qwen3-ASR with MADLAD-400, Apple Translation, or the
+experimental TranslateGemma adapter through the `HeptapodSpeechSwiftAdapters`
+target, which wraps `speech-swift`. The live demo adds deterministic terminology
+post-editing, MOSS streaming, Chatterbox MLX quality output, native macOS voices,
+Kokoro, and the older PyTorch Chatterbox bridge.
 The first run downloads model weights from Hugging Face and caches them locally.
 The JSON report records model load times, per-stage inference latency, transcript,
 translation, audio durations, and output paths.
@@ -406,6 +461,7 @@ Text translation alternatives:
 
 - MADLAD-400 3B: practical first local multilingual translator, about 2.8 GB installed.
 - Apple Translation: fast on-device quality mode on macOS 26+ using installed system language assets.
+- TranslateGemma 4B 4-bit: experimental MLX adapter; fast, but not reliable enough to replace Apple for EN-to-TR.
 - NLLB Distilled 600M: research-only comparison candidate; the reference checkpoint is non-commercial.
 - SeamlessM4T text path: research-grade option, heavier packaging.
 
@@ -439,6 +495,7 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 | ASR | Nemotron 3.5 ASR Streaming 0.6B | MLX/Python | Planned | ~1.5 GB | True cache-aware streaming ASR | Needs mlx-audio bridge; not Swift-native yet |
 | MT | MADLAD-400 3B | MLX Swift | Adapter target ready | ~2.8 GB | First local translation | Quality varies by language pair |
 | MT | Apple Translation | System framework | Adapter target ready | System-managed | Fast, natural on-device translation | macOS 26+ and installed language pair |
+| MT | TranslateGemma 4B 4-bit | MLX/Python | Experimental adapter ready | ~2.4 GB | Local translation experiments | EN-to-TR quality trails Apple in the fixed fixture |
 | MT | NLLB Distilled 600M | Custom/converted | Research | ~1.6 GB | Translation comparison | Non-commercial reference license |
 | MT | SeamlessM4T text path | Seamless | Research | ~4.8 GB | Unified research path | Heavy packaging |
 | TTS | MOSS-TTS-Nano 100M | ONNX Runtime/CPU | Adapter target ready | ~1.5 GB | Streaming Turkish live default | Less expressive than quality mode |
@@ -543,10 +600,12 @@ Useful advanced metrics:
    - Status: ready in `HeptapodSpeechSwiftAdapters`.
    - Runs segment-level Qwen3-ASR transcription through `speech-swift`.
 
-2. `HeptapodMADLADTranslatorAdapter` / `HeptapodAppleTranslationAdapter`
+2. `HeptapodMADLADTranslatorAdapter` / `HeptapodAppleTranslationAdapter` / `HeptapodTranslateGemmaTranslatorAdapter`
    - Status: ready in `HeptapodSpeechSwiftAdapters`.
    - Adds local text translation behind `HeptapodTextTranslator`.
    - Apple Translation is the measured EN-to-TR quality/latency option on macOS 26+; MADLAD remains the portable model-backed fallback.
+   - TranslateGemma remains experimental after the fixed EN-to-TR comparison.
+   - The source-gated terminology post-editor fixes measured domain terms without a second model pass.
 
 3. `HeptapodKokoroTTSAdapter`
    - Status: ready in `HeptapodSpeechSwiftAdapters`.

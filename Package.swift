@@ -24,6 +24,10 @@ let package = Package(
         .executable(
             name: "HeptapodRealSpeechDemo",
             targets: ["HeptapodRealSpeechDemo"]
+        ),
+        .executable(
+            name: "HeptapodTranslationBenchmark",
+            targets: ["HeptapodTranslationBenchmark"]
         )
     ],
     dependencies: [
@@ -53,6 +57,13 @@ let package = Package(
         ),
         .executableTarget(
             name: "HeptapodRealSpeechDemo",
+            dependencies: [
+                "HeptapodLocalSpeechEngine",
+                "HeptapodSpeechSwiftAdapters"
+            ]
+        ),
+        .executableTarget(
+            name: "HeptapodTranslationBenchmark",
             dependencies: [
                 "HeptapodLocalSpeechEngine",
                 "HeptapodSpeechSwiftAdapters"

@@ -22,6 +22,7 @@ func catalogProvidesAlternativesForEachPipelineStage() {
     #expect(catalog.models(for: .speechRecognition).count >= 3)
     #expect(catalog.models(for: .textTranslation).count >= 2)
     #expect(catalog.models(for: .textTranslation).map(\.id).contains(HeptapodModelDescriptor.appleTranslation.id))
+    #expect(catalog.models(for: .textTranslation).map(\.id).contains(HeptapodModelDescriptor.translateGemma4B.id))
     #expect(catalog.models(for: .speechSynthesis).count >= 2)
     #expect(catalog.models(for: .speechSynthesis).map(\.id).contains(HeptapodModelDescriptor.mossTTSNano.id))
     #expect(catalog.models(for: .speechSynthesis).map(\.id).contains(HeptapodModelDescriptor.chatterboxMLXTTS.id))
@@ -192,6 +193,105 @@ func speechSwiftFactoryReportsQualityASRRunnable() {
 }
 
 @Test
+func speechSwiftFactoryReportsTranslateGemmaPipelineRunnable() throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.translateGemma4B.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.chatterboxMLXTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
+
+    #expect(readiness.canRunInference)
+    #expect(readiness.unavailableDescriptors.isEmpty)
+    #expect(readiness.selectedDescriptors.map(\.id).contains(HeptapodModelDescriptor.translateGemma4B.id))
+    _ = try HeptapodSpeechSwiftAdapterFactory.makePipeline(configuration: configuration)
+}
+
+@Test
+func translateGemmaAdapterRequiresSourceLanguageBeforeModelLoad() async {
+    let adapter = HeptapodTranslateGemmaTranslatorAdapter()
+
+    await #expect(throws: HeptapodTranslateGemmaError.sourceLanguageRequired) {
+        try await adapter.translate(
+            "Hello",
+            sourceLanguageCode: nil,
+            targetLanguageCode: "tr"
+        )
+    }
+}
+
+@Test
+func translateGemmaAdapterReportsMissingScriptDuringPrepare() async {
+    let adapter = HeptapodTranslateGemmaTranslatorAdapter(
+        scriptURL: URL(fileURLWithPath: "/tmp/heptapod-missing-translategemma-script-\(UUID().uuidString).py")
+    )
+
+    await #expect(throws: HeptapodTranslateGemmaError.self) {
+        try await adapter.prepare()
+    }
+}
+
+@Test
+func terminologyPostEditorAppliesOnlyWhenSourceAndDraftMatch() async throws {
+    let postEditor = HeptapodTerminologyPostEditor.englishToTurkishLiveSpeech
+    let matchingDraft = HeptapodTranslatedText(
+        sourceText: "We should understand why the first run was slower.",
+        translatedText: "İlk koşunun neden daha yavaş olduğunu anlamalıyız.",
+        sourceLanguageCode: "en-US",
+        targetLanguageCode: "tr-TR"
+    )
+    let unrelatedDraft = HeptapodTranslatedText(
+        sourceText: "The first runner arrived.",
+        translatedText: "İlk koşunun neden daha yavaş olduğunu anlamalıyız.",
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+
+    let edited = try await postEditor.edit(matchingDraft, context: [])
+    let unchanged = try await postEditor.edit(unrelatedDraft, context: [])
+
+    #expect(edited == "İlk çalıştırmanın neden daha yavaş olduğunu anlamalıyız.")
+    #expect(unchanged == unrelatedDraft.translatedText)
+}
+
+@Test
+func postEditingTranslatorKeepsOnlyBoundedAcceptedContext() async throws {
+    let postEditor = ContextRecordingPostEditor()
+    let translator = HeptapodPostEditingTranslator(
+        translator: EchoTranslator(),
+        postEditor: postEditor,
+        contextLimit: 2
+    )
+
+    _ = try await translator.translate("one", sourceLanguageCode: "en", targetLanguageCode: "tr")
+    _ = try await translator.translate("two", sourceLanguageCode: "en", targetLanguageCode: "tr")
+    _ = try await translator.translate("three", sourceLanguageCode: "en", targetLanguageCode: "tr")
+    _ = try await translator.translate("four", sourceLanguageCode: "en", targetLanguageCode: "tr")
+
+    let contexts = await postEditor.recordedContexts()
+    #expect(contexts.map { $0.map(\.sourceText) } == [[], ["one"], ["one", "two"], ["two", "three"]])
+    #expect(await translator.context().map(\.sourceText) == ["three", "four"])
+}
+
+@Test
+func postEditingTranslatorUsesDraftWhenOptionalEditorCannotPrepare() async throws {
+    let translator = HeptapodPostEditingTranslator(
+        translator: EchoTranslator(),
+        postEditor: PreparationFailingPostEditor()
+    )
+
+    try await translator.prepare()
+    let result = try await translator.translate(
+        "keep this draft",
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+
+    #expect(result.translatedText == "keep this draft")
+}
+
+@Test
 func speechSwiftFactoryReportsChatterboxPipelineRunnable() {
     let configuration = HeptapodPipelineConfiguration(
         speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
@@ -273,6 +373,19 @@ func speechSwiftFactoryBuildsPipelineWithoutLoadingModels() throws {
 func chatterboxAdapterReportsMissingScriptDuringPrepare() async {
     let adapter = HeptapodChatterboxTTSAdapter(
         scriptURL: URL(fileURLWithPath: "/tmp/heptapod-missing-chatterbox-script-\(UUID().uuidString).py")
+    )
+
+    await #expect(throws: HeptapodChatterboxTTSError.self) {
+        try await adapter.prepare()
+    }
+}
+
+@Test
+func chatterboxAdapterRejectsInvalidProsodyBeforeStartingWorker() async {
+    let adapter = HeptapodChatterboxTTSAdapter(
+        scriptURL: URL(fileURLWithPath: "/usr/bin/true"),
+        exaggeration: 1.1,
+        usesPersistentWorker: false
     )
 
     await #expect(throws: HeptapodChatterboxTTSError.self) {
@@ -2076,6 +2189,35 @@ private struct FixedTranslator: HeptapodTextTranslator {
             sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode
         )
+    }
+}
+
+private actor ContextRecordingPostEditor: HeptapodTranslationPostEditor {
+    private var contexts: [[HeptapodTranslationContextItem]] = []
+
+    func edit(
+        _ draft: HeptapodTranslatedText,
+        context: [HeptapodTranslationContextItem]
+    ) async throws -> String {
+        contexts.append(context)
+        return draft.translatedText
+    }
+
+    func recordedContexts() -> [[HeptapodTranslationContextItem]] {
+        contexts
+    }
+}
+
+private struct PreparationFailingPostEditor: HeptapodTranslationPostEditor {
+    func prepare() async throws {
+        throw HeptapodEngineError.adapterNotImplemented("post-edit preparation test")
+    }
+
+    func edit(
+        _ draft: HeptapodTranslatedText,
+        context: [HeptapodTranslationContextItem]
+    ) async throws -> String {
+        "unexpected edit"
     }
 }
 

@@ -44,7 +44,7 @@ def main() -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL, help="MLX Chatterbox model repository or path.")
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--multilingual", action="store_true", help="Accepted for bridge compatibility.")
-    parser.add_argument("--exaggeration", type=float, default=0.1)
+    parser.add_argument("--exaggeration", type=float, default=0.5)
     parser.add_argument("--cfg-weight", type=float, default=0.5)
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--warmup", action="store_true", help="Warm the model before reporting ready.")
@@ -149,9 +149,9 @@ def run_server(args, *, runtime, model, load_seconds: float) -> int:
                 language=normalize_language_code(str(request.get("language") or args.language)),
                 output=output,
                 voice_prompt=request.get("voice_prompt") or args.voice_prompt,
-                exaggeration=args.exaggeration,
-                cfg_weight=args.cfg_weight,
-                temperature=args.temperature,
+                exaggeration=float(request.get("exaggeration", args.exaggeration)),
+                cfg_weight=float(request.get("cfg_weight", args.cfg_weight)),
+                temperature=float(request.get("temperature", args.temperature)),
                 trim_boundary_silence=args.trim_boundary_silence,
                 silence_threshold_db=args.silence_threshold_db,
                 leading_silence_ms=args.leading_silence_ms,

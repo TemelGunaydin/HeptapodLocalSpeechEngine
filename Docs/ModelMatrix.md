@@ -1,8 +1,9 @@
 # Model Matrix
 
 All numbers are estimates until each adapter pins a model artifact and cache layout.
-Silero VAD, Qwen3-ASR, MADLAD, Apple Translation, MOSS-TTS-Nano, Chatterbox MLX, native macOS
-voices, Kokoro, and the older PyTorch Chatterbox bridge are runnable today.
+Silero VAD, Qwen3-ASR, MADLAD, Apple Translation, experimental TranslateGemma,
+MOSS-TTS-Nano, Chatterbox MLX, native macOS voices, Kokoro, and the older
+PyTorch Chatterbox bridge are runnable today.
 MOSS is the streaming Turkish default; Chatterbox MLX is the quality mode.
 
 Nemotron 3.5 ASR Streaming is tracked through the MLX community conversion,
@@ -21,6 +22,7 @@ Swift-native adapter.
 | ASR | Nemotron 3.5 ASR Streaming 0.6B | Planned | ~1.5 GB | MLX/Python cache-aware streaming candidate |
 | MT | MADLAD-400 3B | Adapter target ready | ~2.8 GB | Practical first local translator |
 | MT | Apple Translation | Adapter target ready | System-managed | Fast on-device quality mode; macOS 26+ |
+| MT | TranslateGemma 4B 4-bit | Experimental adapter ready | ~2.4 GB | Faster than MADLAD, but below Apple EN-to-TR quality in the fixed fixture |
 | MT | NLLB Distilled 600M | Research | ~1.6 GB | Non-commercial comparison candidate |
 | MT | SeamlessM4T text path | Research | ~4.8 GB | Heavy unified translation research |
 | TTS | MOSS-TTS-Nano 100M | Streaming bridge ready | ~1.5 GB | First PCM before full synthesis; CPU ONNX |
@@ -44,7 +46,7 @@ Silero VAD + Qwen3 ASR 0.6B + MADLAD-400 3B + MOSS-TTS-Nano
 Natural voice:
 
 ```text
-Silero VAD + Qwen3 ASR 0.6B + Apple Translation + Chatterbox MLX
+Silero VAD + Qwen3 ASR 0.6B + Apple Translation + source-gated glossary + Chatterbox MLX
 ```
 
 Future/research:

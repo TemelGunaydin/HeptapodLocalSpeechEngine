@@ -114,10 +114,15 @@ struct HeptapodLiveSpeechDemo {
             return try HeptapodSpeechSwiftAdapterFactory.makePipeline(
                 configuration: options.pipelineConfiguration,
                 asrModelID: options.asrPreset.modelID,
+                translationPostEditor: options.translationPostEditor,
+                translationPostEditContextLimit: 2,
                 chatterboxPythonExecutable: options.ttsPythonExecutable,
                 chatterboxScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
                 chatterboxVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:)),
                 chatterboxDevice: options.ttsDevice,
+                chatterboxExaggeration: options.ttsExaggeration,
+                chatterboxCFGWeight: options.ttsCFGWeight,
+                chatterboxTemperature: options.ttsTemperature,
                 chatterboxUsesPersistentWorker: options.usesChatterboxPersistentWorker,
                 chatterboxMLXPythonExecutable: options.ttsPythonExecutable,
                 chatterboxMLXScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
@@ -149,6 +154,7 @@ struct HeptapodLiveSpeechDemo {
         Mode: \(options.usesRealModels ? "real speech-swift adapters" : "preview adapters")
         ASR:  \(options.asrPreset.descriptor.displayName)
         MT:   \(options.mtDescriptor.displayName)
+        MT post-edit: \(options.mtPostEditBackend.rawValue)
         TTS:  \(options.usesTextOnly ? "off" : options.ttsDescriptor.displayName)
         Flow: \(options.usesTextOnly ? "audio chunk source -> live session -> VAD -> ASR -> MT" : "audio chunk source -> live session -> VAD -> ASR -> MT -> TTS -> playback sink")
         Source: \(options.sourceDescription)
@@ -186,8 +192,10 @@ struct HeptapodLiveSpeechDemo {
           --from <code>       Source language. Default: en.
           --to <code>         Target language. Default: tr.
           --asr <name>        Real mode ASR backend: compact or quality. Default: compact.
-          --mt <name>         Real mode translation: madlad or apple. Default: madlad.
+          --mt <name>         Real mode translation: madlad, apple, or translategemma. Default: madlad.
                               Apple uses installed system language assets on macOS 26+.
+          --mt-postedit <name>
+                              Translation post-edit: glossary or none. Default: glossary.
           --latency <preset>  Live timing preset: low, balanced, or quality. Default: balanced.
           --chunk-duration <sec>
                               Audio chunk size for live/file demos. Lower is faster but less stable.
@@ -207,6 +215,12 @@ struct HeptapodLiveSpeechDemo {
           --tts-device <name> Legacy PyTorch Chatterbox device: auto, cpu, mps, or cuda.
           --tts-voice-prompt <path>
                               Optional reference WAV for Chatterbox voice cloning.
+          --tts-exaggeration <value>
+                              Chatterbox expression from 0.0 to 1.0. Default: 0.5.
+          --tts-cfg-weight <value>
+                              Chatterbox guidance/pace from 0.0 to 1.0. Default: 0.5.
+          --tts-temperature <value>
+                              Chatterbox sampling temperature from 0.01 to 5.0. Default: 0.8.
           --tts-one-shot      Run a new Chatterbox Python process for each segment.
           --chunk-translation
                               Translate every audio chunk instead of waiting for sentence/pause endpointing.
@@ -656,6 +670,7 @@ private struct DemoOptions {
     let usesASRStabilization: Bool
     let asrPreset: DemoASRPreset
     let mtBackend: DemoMTBackend
+    let mtPostEditBackend: DemoMTPostEditBackend
     let sourceLanguageCode: String?
     let targetLanguageCode: String?
     let ttsBackend: DemoTTSBackend
@@ -663,6 +678,9 @@ private struct DemoOptions {
     let ttsPythonExecutable: String
     let ttsDevice: String?
     let ttsVoicePromptPath: String?
+    let ttsExaggeration: Double
+    let ttsCFGWeight: Double
+    let ttsTemperature: Double
     let usesChatterboxPersistentWorker: Bool
     let durationSeconds: Double?
     let audioPath: String?
@@ -687,6 +705,7 @@ private struct DemoOptions {
         var usesASRStabilization: Bool?
         var asrPreset = DemoASRPreset.compact
         var mtBackend = DemoMTBackend.madlad
+        var mtPostEditBackend = DemoMTPostEditBackend.glossary
         var sourceLanguageCode: String?
         var targetLanguageCode: String?
         var ttsBackend: DemoTTSBackend?
@@ -694,6 +713,9 @@ private struct DemoOptions {
         var ttsPythonExecutable: String?
         var ttsDevice: String?
         var ttsVoicePromptPath: String?
+        var ttsExaggeration = 0.5
+        var ttsCFGWeight = 0.5
+        var ttsTemperature = 0.8
         var usesChatterboxPersistentWorker = true
         var durationSeconds: Double?
         var audioPath: String?
@@ -766,6 +788,12 @@ private struct DemoOptions {
                     throw DemoError.invalidMTBackend(rawValue)
                 }
                 mtBackend = backend
+            case "--mt-postedit":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let backend = DemoMTPostEditBackend(rawValue: rawValue.lowercased()) else {
+                    throw DemoError.invalidMTPostEditBackend(rawValue)
+                }
+                mtPostEditBackend = backend
             case "--tts":
                 let rawValue = try Self.value(after: argument, in: arguments, at: &index)
                 guard let backend = DemoTTSBackend(rawValue: rawValue.lowercased()) else {
@@ -784,6 +812,24 @@ private struct DemoOptions {
                 ttsDevice = rawValue == "auto" ? nil : rawValue
             case "--tts-voice-prompt":
                 ttsVoicePromptPath = try Self.value(after: argument, in: arguments, at: &index)
+            case "--tts-exaggeration":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let value = Double(rawValue), (0...1).contains(value) else {
+                    throw DemoError.invalidRangeOption(argument, rawValue, "0.0...1.0")
+                }
+                ttsExaggeration = value
+            case "--tts-cfg-weight":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let value = Double(rawValue), (0...1).contains(value) else {
+                    throw DemoError.invalidRangeOption(argument, rawValue, "0.0...1.0")
+                }
+                ttsCFGWeight = value
+            case "--tts-temperature":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let value = Double(rawValue), value >= 0.01, value <= 5 else {
+                    throw DemoError.invalidRangeOption(argument, rawValue, "0.01...5.0")
+                }
+                ttsTemperature = value
             case "--tts-one-shot":
                 usesChatterboxPersistentWorker = false
             case "--output-dir":
@@ -821,6 +867,7 @@ private struct DemoOptions {
         self.usesASRStabilization = usesASRStabilization ?? (usesTextOnly ? false : latencyPreset.usesASRStabilization)
         self.asrPreset = asrPreset
         self.mtBackend = mtBackend
+        self.mtPostEditBackend = mtPostEditBackend
         self.sourceLanguageCode = sourceLanguageCode
         self.targetLanguageCode = targetLanguageCode
         let resolvedTTSBackend = ttsBackend ?? Self.defaultTTSBackend(
@@ -833,6 +880,9 @@ private struct DemoOptions {
         )
         self.ttsDevice = ttsDevice
         self.ttsVoicePromptPath = ttsVoicePromptPath
+        self.ttsExaggeration = ttsExaggeration
+        self.ttsCFGWeight = ttsCFGWeight
+        self.ttsTemperature = ttsTemperature
         self.usesChatterboxPersistentWorker = usesChatterboxPersistentWorker
         self.durationSeconds = durationSeconds
         self.audioPath = audioPath
@@ -940,6 +990,17 @@ private struct DemoOptions {
             HeptapodModelDescriptor.madladTranslator
         case .apple:
             HeptapodModelDescriptor.appleTranslation
+        case .translateGemma:
+            HeptapodModelDescriptor.translateGemma4B
+        }
+    }
+
+    var translationPostEditor: (any HeptapodTranslationPostEditor)? {
+        switch mtPostEditBackend {
+        case .none:
+            nil
+        case .glossary:
+            HeptapodTerminologyPostEditor.englishToTurkishLiveSpeech
         }
     }
 }
@@ -947,6 +1008,12 @@ private struct DemoOptions {
 private enum DemoMTBackend: String {
     case madlad
     case apple
+    case translateGemma = "translategemma"
+}
+
+private enum DemoMTPostEditBackend: String {
+    case none
+    case glossary
 }
 
 private enum DemoTTSBackend: String {
@@ -1263,7 +1330,9 @@ private enum DemoError: LocalizedError {
     case invalidDuration(String)
     case invalidLatencyPreset(String)
     case invalidMTBackend(String)
+    case invalidMTPostEditBackend(String)
     case invalidPositiveOption(String, String)
+    case invalidRangeOption(String, String, String)
     case invalidTTSBackend(String)
     case invalidTTSDevice(String)
     case audioFileRequiresRealMode
@@ -1287,9 +1356,13 @@ private enum DemoError: LocalizedError {
         case .invalidLatencyPreset(let value):
             "Invalid latency preset: \(value). Use low, balanced, or quality."
         case .invalidMTBackend(let value):
-            "Invalid translation backend: \(value). Use madlad or apple."
+            "Invalid translation backend: \(value). Use madlad, apple, or translategemma."
+        case .invalidMTPostEditBackend(let value):
+            "Invalid translation post-edit backend: \(value). Use glossary or none."
         case .invalidPositiveOption(let option, let value):
             "Invalid value for \(option): \(value)."
+        case .invalidRangeOption(let option, let value, let range):
+            "Invalid value for \(option): \(value). Expected \(range)."
         case .invalidTTSBackend(let value):
             "Invalid TTS backend: \(value). Use moss, chatterbox-mlx, apple, kokoro, or chatterbox."
         case .invalidTTSDevice(let value):

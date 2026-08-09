@@ -32,6 +32,7 @@ public struct HeptapodModelCatalog: Sendable {
         .nemotronStreamingASR,
         .madladTranslator,
         .appleTranslation,
+        .translateGemma4B,
         .nllbDistilledTranslator,
         .seamlessTextTranslator,
         .qwenTTSCompact,
@@ -274,6 +275,32 @@ public extension HeptapodModelDescriptor {
         summary: "Fast on-device translation using language assets installed by macOS or iOS.",
         tradeoffs: "The CLI adapter requires macOS 26.0 or iOS 26.0 and a preinstalled source/target language pair. Terminology still depends on sentence context.",
         licenseNote: "Provided by the operating system; no model weights are redistributed by this package."
+    )
+
+    static let translateGemma4B = HeptapodModelDescriptor(
+        id: "mt.translategemma.4b.mlx.4bit",
+        stage: .textTranslation,
+        displayName: "TranslateGemma 4B 4-bit",
+        provider: "Google / MLX Community",
+        family: "TranslateGemma",
+        backend: .custom,
+        capabilities: [.textTranslation],
+        qualityTier: .highQuality,
+        latencyTier: .segmentBased,
+        status: .ready,
+        footprint: HeptapodModelFootprint(
+            downloadSize: .gigabytes(2.2),
+            installedSize: .gigabytes(2.4),
+            recommendedMemory: .gigabytes(6)
+        ),
+        languageCoverage: HeptapodLanguageCoverage(
+            sourceLanguageCodes: ["en", "tr"],
+            targetLanguageCodes: ["en", "tr"],
+            notes: "Translation-specialized model covering 55 evaluated languages; English-to-Turkish is the first Heptapod quality target."
+        ),
+        summary: "Local quality translation candidate optimized for Apple Silicon through MLX.",
+        tradeoffs: "Higher per-segment latency and memory than Apple Translation; runs through a persistent local Python worker.",
+        licenseNote: "Gemma Terms of Use apply; users must review and accept the model license before distribution or product use."
     )
 
     static let nllbDistilledTranslator = HeptapodModelDescriptor(

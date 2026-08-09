@@ -56,6 +56,9 @@ def main() -> int:
     parser.add_argument("--multilingual", action="store_true", help="Force ChatterboxMultilingualTTS.")
     parser.add_argument("--server", action="store_true", help="Run a JSON-lines synthesis worker on stdin/stdout.")
     parser.add_argument("--t3-model", help="Optional multilingual T3 model, for example v2 or v3.")
+    parser.add_argument("--exaggeration", type=float, default=0.5)
+    parser.add_argument("--cfg-weight", type=float, default=0.5)
+    parser.add_argument("--temperature", type=float, default=0.8)
     args = parser.parse_args()
 
     if not args.server and (not args.text or not args.output):
@@ -95,6 +98,9 @@ def main() -> int:
         language=language,
         voice_prompt=args.voice_prompt,
         use_multilingual=use_multilingual,
+        exaggeration=args.exaggeration,
+        cfg_weight=args.cfg_weight,
+        temperature=args.temperature,
     )
     runtime["torchaudio"].save(str(output), wav, model.sr)
     print(f"Wrote {output} at {model.sr} Hz")
@@ -160,6 +166,9 @@ def run_server(args, *, runtime, model, initial_language: str, use_multilingual:
                 language=language,
                 voice_prompt=request.get("voice_prompt"),
                 use_multilingual=use_multilingual,
+                exaggeration=float(request.get("exaggeration", args.exaggeration)),
+                cfg_weight=float(request.get("cfg_weight", args.cfg_weight)),
+                temperature=float(request.get("temperature", args.temperature)),
             )
             runtime["torchaudio"].save(str(output), wav, model.sr)
             print(json.dumps({"id": request_id, "ok": True, "output": str(output)}), flush=True)
@@ -169,10 +178,26 @@ def run_server(args, *, runtime, model, initial_language: str, use_multilingual:
     return 0
 
 
-def generate_audio(*, model, text: str, language: str, voice_prompt: str | None, use_multilingual: bool):
+def generate_audio(
+    *,
+    model,
+    text: str,
+    language: str,
+    voice_prompt: str | None,
+    use_multilingual: bool,
+    exaggeration: float,
+    cfg_weight: float,
+    temperature: float,
+):
+    generation_options = {
+        "audio_prompt_path": voice_prompt,
+        "exaggeration": exaggeration,
+        "cfg_weight": cfg_weight,
+        "temperature": temperature,
+    }
     if use_multilingual:
-        return model.generate(text, language_id=language, audio_prompt_path=voice_prompt)
-    return model.generate(text, audio_prompt_path=voice_prompt)
+        return model.generate(text, language_id=language, **generation_options)
+    return model.generate(text, **generation_options)
 
 
 def normalize_language_code(language: str) -> str:

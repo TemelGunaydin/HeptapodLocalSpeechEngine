@@ -9,6 +9,7 @@ System audio
   -> Voice activity detection
   -> Speech recognition
   -> Text translation
+  -> Optional bounded-context post-edit
   -> Speech synthesis
   -> Audio playback
 ```
@@ -64,6 +65,12 @@ The pipeline owns:
 - passing language hints,
 - combining ASR -> translation -> TTS,
 - rejecting empty/fake output.
+
+The optional translation post-edit wrapper owns:
+
+- retaining only the configured number of accepted source/translation pairs,
+- applying a post-editor after the base translator,
+- falling back to the original draft if an optional post-editor fails.
 
 The live session owns:
 

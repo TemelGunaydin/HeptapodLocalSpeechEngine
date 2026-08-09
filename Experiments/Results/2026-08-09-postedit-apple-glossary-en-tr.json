@@ -1,0 +1,257 @@
+{
+  "average_post_edit_seconds" : 0.0012216511666666666,
+  "average_translation_seconds" : 0.06737880383333332,
+  "backend" : "apple",
+  "created_at" : "2026-08-09T19:35:35Z",
+  "descriptor_id" : "mt.apple.translation.on_device",
+  "maximum_post_edit_seconds" : 0.006031958,
+  "maximum_translation_seconds" : 0.43694725,
+  "post_edit_backend" : "glossary",
+  "post_edit_context_limit" : 2,
+  "post_edit_preparation_seconds" : 2.475e-05,
+  "preparation_seconds" : 0.000102583,
+  "results" : [
+    {
+      "category" : "basic",
+      "draft_translation" : "Bugün yerel canlı çeviriyi test ediyoruz.",
+      "id" : "basic-01",
+      "post_edit_seconds" : 0.006031958,
+      "reference" : "Bugün yerel canlı çeviriyi test ediyoruz.",
+      "source" : "Today we are testing local live translation.",
+      "translation" : "Bugün yerel canlı çeviriyi test ediyoruz.",
+      "translation_seconds" : 0.272034833
+    },
+    {
+      "category" : "basic",
+      "draft_translation" : "Çevrilen ses net ve doğal gelmelidir.",
+      "id" : "basic-02",
+      "post_edit_seconds" : 0.00106,
+      "reference" : "Çevrilmiş ses net ve doğal duyulmalı.",
+      "source" : "The translated voice should sound clear and natural.",
+      "translation" : "Çevrilmiş ses net ve doğal duyulmalı.",
+      "translation_seconds" : 0.034664333
+    },
+    {
+      "category" : "word-order",
+      "draft_translation" : "Dün önerdiğin kitap beklediğimden çok daha iyiydi.",
+      "id" : "relative-01",
+      "post_edit_seconds" : 0.001053125,
+      "reference" : "Dün önerdiğin kitap beklediğimden çok daha iyiydi.",
+      "source" : "The book you recommended yesterday was much better than I expected.",
+      "translation" : "Dün önerdiğin kitap beklediğimden çok daha iyiydi.",
+      "translation_seconds" : 0.03522325
+    },
+    {
+      "category" : "word-order",
+      "draft_translation" : "Numaraları bir kez daha kontrol ettikten sonra raporu sana göndereceğim.",
+      "id" : "sequence-01",
+      "post_edit_seconds" : 0.00104275,
+      "reference" : "Rakamları bir kez daha kontrol ettikten sonra raporu sana göndereceğim.",
+      "source" : "I will send you the report after I check the numbers one more time.",
+      "translation" : "Numaraları bir kez daha kontrol ettikten sonra raporu sana göndereceğim.",
+      "translation_seconds" : 0.03923525
+    },
+    {
+      "category" : "complex-sentence",
+      "draft_translation" : "Bağlantı dengesiz olmasına rağmen, toplantı kesintisiz olarak devam etti.",
+      "id" : "contrast-01",
+      "post_edit_seconds" : 0.00102425,
+      "reference" : "Bağlantı kararsız olmasına rağmen toplantı kesintisiz devam etti.",
+      "source" : "Although the connection was unstable, the meeting continued without interruption.",
+      "translation" : "Bağlantı dengesiz olmasına rağmen, toplantı kesintisiz olarak devam etti.",
+      "translation_seconds" : 0.037555125
+    },
+    {
+      "category" : "complex-sentence",
+      "draft_translation" : "Gecikme iki saniyenin altında kalırsa, çoğu izleyici deneyimi kabul edilebilir bulacaktır.",
+      "id" : "conditional-01",
+      "post_edit_seconds" : 0.001020709,
+      "reference" : "Gecikme iki saniyenin altında kalırsa çoğu izleyici bu deneyimi kabul edilebilir bulacaktır.",
+      "source" : "If the latency stays below two seconds, most viewers will find the experience acceptable.",
+      "translation" : "Gecikme iki saniyenin altında kalırsa, çoğu izleyici deneyimi kabul edilebilir bulacaktır.",
+      "translation_seconds" : 0.046703167
+    },
+    {
+      "category" : "modality",
+      "draft_translation" : "Güncelleme çökmeyi düzeltmiş olabilir, ancak yine de yük altında test etmemiz gerekiyor.",
+      "id" : "uncertainty-01",
+      "post_edit_seconds" : 0.001036583,
+      "reference" : "Güncelleme çökmeyi düzeltmiş olabilir, ancak sistemi yine de yük altında test etmemiz gerekiyor.",
+      "source" : "The update may have fixed the crash, but we still need to test it under load.",
+      "translation" : "Güncelleme çökmeyi düzeltmiş olabilir, ancak yine de yük altında test etmemiz gerekiyor.",
+      "translation_seconds" : 0.037572959
+    },
+    {
+      "category" : "negation",
+      "draft_translation" : "İlk koşunun neden daha yavaş olduğunu anlayana kadar sonucu yayınlamamalıyız.",
+      "id" : "negation-01",
+      "post_edit_seconds" : 0.001010792,
+      "reference" : "İlk çalıştırmanın neden daha yavaş olduğunu anlamadan sonucu yayımlamamalıyız.",
+      "source" : "We should not publish the result until we understand why the first run was slower.",
+      "translation" : "İlk çalıştırmanın neden daha yavaş olduğunu anlayana kadar sonucu yayınlamamalıyız.",
+      "translation_seconds" : 0.044014584
+    },
+    {
+      "category" : "question",
+      "draft_translation" : "Daha düşük gecikme için ne kadar kaliteyi takas etmeye hazırız?",
+      "id" : "question-01",
+      "post_edit_seconds" : 0.001068917,
+      "reference" : "Daha düşük gecikme uğruna ne kadar kaliteden ödün vermeye hazırız?",
+      "source" : "How much quality are we willing to trade for lower latency?",
+      "translation" : "Daha düşük gecikme uğruna ne kadar kaliteden ödün vermeye hazırız?",
+      "translation_seconds" : 0.039292334
+    },
+    {
+      "category" : "idiom",
+      "draft_translation" : "Hikayenin her iki tarafını da duymadan hemen sonuca varmayalım.",
+      "id" : "idiom-01",
+      "post_edit_seconds" : 0.001031083,
+      "reference" : "Olayın iki tarafını da dinlemeden hemen sonuca varmayalım.",
+      "source" : "Let's not jump to conclusions before we hear both sides of the story.",
+      "translation" : "Hikayenin her iki tarafını da duymadan hemen sonuca varmayalım.",
+      "translation_seconds" : 0.041274167
+    },
+    {
+      "category" : "spoken-language",
+      "draft_translation" : "Demek istediğim, model bir demoda kulağa hoş geliyor, ancak gerçek konuşmalar daha dağınık.",
+      "id" : "spoken-01",
+      "post_edit_seconds" : 0.000993,
+      "reference" : "Demek istediğim şu: Model bir demoda iyi duyuluyor ama gerçek konuşmalar daha karmaşık oluyor.",
+      "source" : "What I mean is, the model sounds fine in a demo, but real conversations are messier.",
+      "translation" : "Demek istediğim, model bir demoda kulağa hoş geliyor, ancak gerçek konuşmalar daha dağınık.",
+      "translation_seconds" : 0.0427015
+    },
+    {
+      "category" : "spoken-language",
+      "draft_translation" : "Dürüst olmak gerekirse, yerel versiyonun bu kadar iyi çalışmasını beklemiyordum.",
+      "id" : "spoken-02",
+      "post_edit_seconds" : 0.001039708,
+      "reference" : "Açıkçası yerel sürümün bu kadar iyi çalışmasını beklemiyordum.",
+      "source" : "To be honest, I did not expect the local version to work this well.",
+      "translation" : "Dürüst olmak gerekirse, yerel sürümün bu kadar iyi çalışmasını beklemiyordum.",
+      "translation_seconds" : 0.044747625
+    },
+    {
+      "category" : "entities",
+      "draft_translation" : "Dr. Ayşe Demir, 12 Mart'ta saat 14:30'da görüşmeye katılacak.",
+      "id" : "entity-01",
+      "post_edit_seconds" : 0.001041125,
+      "reference" : "Dr. Ayşe Demir, 12 Mart saat 14.30'da görüşmeye katılacak.",
+      "source" : "Dr. Ayşe Demir will join the call at 14:30 on March 12.",
+      "translation" : "Dr. Ayşe Demir, 12 Mart'ta saat 14:30'da görüşmeye katılacak.",
+      "translation_seconds" : 0.045715875
+    },
+    {
+      "category" : "numbers",
+      "draft_translation" : "Yeni model ortalama gecikmeyi 3,4 saniyeden 1,8 saniyeye düşürdü.",
+      "id" : "number-01",
+      "post_edit_seconds" : 0.000973084,
+      "reference" : "Yeni model ortalama gecikmeyi 3,4 saniyeden 1,8 saniyeye düşürdü.",
+      "source" : "The new model reduced average latency from 3.4 seconds to 1.8 seconds.",
+      "translation" : "Yeni model ortalama gecikmeyi 3,4 saniyeden 1,8 saniyeye düşürdü.",
+      "translation_seconds" : 0.43694725
+    },
+    {
+      "category" : "technical",
+      "draft_translation" : "Kalıcı çalışan modeli bellekte tutar, böylece her cümle başlangıç maliyetini ödemez.",
+      "id" : "technical-01",
+      "post_edit_seconds" : 0.001008541,
+      "reference" : "Kalıcı worker modeli bellekte tuttuğu için her cümlede başlangıç maliyeti yeniden ödenmiyor.",
+      "source" : "The persistent worker keeps the model in memory so each sentence does not pay the startup cost.",
+      "translation" : "Kalıcı worker modeli bellekte tutar, böylece her cümle başlangıç maliyetini ödemez.",
+      "translation_seconds" : 0.03922375
+    },
+    {
+      "category" : "technical",
+      "draft_translation" : "Çeviri kuyruğuna yalnızca sabit transkript önekleri gönderilmelidir.",
+      "id" : "technical-02",
+      "post_edit_seconds" : 0.000969375,
+      "reference" : "Çeviri kuyruğuna yalnızca kararlı transkript önekleri gönderilmelidir.",
+      "source" : "Only stable transcript prefixes should be sent to the translation queue.",
+      "translation" : "Çeviri kuyruğuna yalnızca kararlı transkript önekleri gönderilmelidir.",
+      "translation_seconds" : 0.03877775
+    },
+    {
+      "category" : "complex-sentence",
+      "draft_translation" : "Konuşma sentezi tüm paragrafı beklediği için oynatma geç başladı.",
+      "id" : "causal-01",
+      "post_edit_seconds" : 0.000966792,
+      "reference" : "Ses sentezi paragrafın tamamını beklediği için oynatma geç başladı.",
+      "source" : "Playback started late because speech synthesis waited for the entire paragraph.",
+      "translation" : "Ses sentezi tüm paragrafı beklediği için oynatma geç başladı.",
+      "translation_seconds" : 0.03498125
+    },
+    {
+      "category" : "passive",
+      "draft_translation" : "İki kritik ses hatası keşfedildikten sonra sürüm ertelendi.",
+      "id" : "passive-01",
+      "post_edit_seconds" : 0.000921834,
+      "reference" : "İki kritik ses hatası bulununca sürüm ertelendi.",
+      "source" : "The release was postponed after two critical audio bugs were discovered.",
+      "translation" : "İki kritik ses hatası keşfedildikten sonra sürüm ertelendi.",
+      "translation_seconds" : 0.039641459
+    },
+    {
+      "category" : "complex-sentence",
+      "draft_translation" : "Konuşmacı hala konuşurken tercüme edilen konuşmanın başlayabilmesi için bölümleri kısalttık.",
+      "id" : "purpose-01",
+      "post_edit_seconds" : 0.000995542,
+      "reference" : "Çevrilmiş konuşma, konuşmacı hâlâ konuşurken başlayabilsin diye segmentleri kısalttık.",
+      "source" : "We shortened the segments so translated speech could begin while the speaker was still talking.",
+      "translation" : "Konuşmacı hala konuşurken çevrilmiş konuşma başlayabilsin diye segmentleri kısalttık.",
+      "translation_seconds" : 0.043685166
+    },
+    {
+      "category" : "comparison",
+      "draft_translation" : "Biraz daha yavaş ama doğal bir ses, anlaşılması zor olan hızlı bir sesten daha kullanışlıdır.",
+      "id" : "comparison-01",
+      "post_edit_seconds" : 0.001021292,
+      "reference" : "Biraz daha yavaş ama doğal bir ses, hızlı fakat anlaşılması zor bir sesten daha kullanışlıdır.",
+      "source" : "A slightly slower but natural voice is more useful than a fast voice that is hard to understand.",
+      "translation" : "Biraz daha yavaş ama doğal bir ses, anlaşılması zor olan hızlı bir sesten daha kullanışlıdır.",
+      "translation_seconds" : 0.041168791
+    },
+    {
+      "category" : "phrasal-verb",
+      "draft_translation" : "Segmentler arasında ses çıkışı formatı değiştiğinde bir sorunla karşılaştık.",
+      "id" : "phrasal-01",
+      "post_edit_seconds" : 0.001042084,
+      "reference" : "Segmentler arasında ses çıkış biçimi değişince bir sorunla karşılaştık.",
+      "source" : "We ran into a problem when the audio output format changed between segments.",
+      "translation" : "Segmentler arasında ses çıkış biçimi değiştiğinde bir sorunla karşılaştık.",
+      "translation_seconds" : 0.042727542
+    },
+    {
+      "category" : "reported-speech",
+      "draft_translation" : "\"İndirme biter bitmez seni arayacağım\" dedi.",
+      "id" : "quote-01",
+      "post_edit_seconds" : 0.001025917,
+      "reference" : "\"İndirme biter bitmez seni arayacağım,\" dedi.",
+      "source" : "She said, \"I will call you as soon as the download finishes.\"",
+      "translation" : "\"İndirme biter bitmez seni arayacağım\" dedi.",
+      "translation_seconds" : 0.042891791
+    },
+    {
+      "category" : "list",
+      "draft_translation" : "Test net konuşma, arka plan müziği, kısa duraklamalar ve ani ses değişikliklerini kapsar.",
+      "id" : "list-01",
+      "post_edit_seconds" : 0.000972792,
+      "reference" : "Test; net konuşmayı, arka plan müziğini, kısa duraklamaları ve ani ses değişikliklerini kapsıyor.",
+      "source" : "The test covers clear speech, background music, short pauses, and sudden volume changes.",
+      "translation" : "Test net konuşma, arka plan müziği, kısa duraklamalar ve ani ses değişikliklerini kapsar.",
+      "translation_seconds" : 0.047781666
+    },
+    {
+      "category" : "multi-sentence-context",
+      "draft_translation" : "Maya toplantıdan önce transkripti gözden geçirdi. Bir cümlenin yanlış sırayla çevrildiğini fark etti.",
+      "id" : "context-01",
+      "post_edit_seconds" : 0.000968375,
+      "reference" : "Maya toplantıdan önce transkripti inceledi. Bir cümlenin yanlış sırayla çevrildiğini fark etti.",
+      "source" : "Maya reviewed the transcript before the meeting. She noticed that one sentence had been translated in the wrong order.",
+      "translation" : "Maya toplantıdan önce transkripti gözden geçirdi. Bir cümlenin yanlış sırayla çevrildiğini fark etti.",
+      "translation_seconds" : 0.048529875
+    }
+  ],
+  "source_language" : "en",
+  "target_language" : "tr"
+}

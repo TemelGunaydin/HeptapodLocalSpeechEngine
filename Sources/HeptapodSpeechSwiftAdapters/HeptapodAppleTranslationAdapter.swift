@@ -13,14 +13,17 @@ public actor HeptapodAppleTranslationAdapter: HeptapodTextTranslator {
     public nonisolated let descriptor: HeptapodModelDescriptor
 
     private let strategy: HeptapodAppleTranslationStrategy
+    private let maximumRetryCount: Int
     private var workers: [LanguagePair: AppleTranslationWorker] = [:]
 
     public init(
         descriptor: HeptapodModelDescriptor = .appleTranslation,
-        strategy: HeptapodAppleTranslationStrategy = .highFidelity
+        strategy: HeptapodAppleTranslationStrategy = .highFidelity,
+        maximumRetryCount: Int = 1
     ) {
         self.descriptor = descriptor
         self.strategy = strategy
+        self.maximumRetryCount = max(0, maximumRetryCount)
     }
 
     public func prepare() async throws {
@@ -65,9 +68,23 @@ public actor HeptapodAppleTranslationAdapter: HeptapodTextTranslator {
             )
         }
 
-        let worker = try await preparedWorker(for: pair)
-        let translatedText = try await worker.translate(sourceText)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var worker = try await preparedWorker(for: pair)
+        var attempt = 0
+        let translatedText: String
+        while true {
+            do {
+                translatedText = try await worker.translate(sourceText)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            } catch {
+                if error is CancellationError || attempt >= maximumRetryCount {
+                    throw error
+                }
+                attempt += 1
+                worker = makeWorker(for: pair)
+                await Task.yield()
+            }
+        }
 
         return HeptapodTranslatedText(
             sourceText: sourceText,
@@ -116,9 +133,14 @@ public actor HeptapodAppleTranslationAdapter: HeptapodTextTranslator {
             )
         }
 
+        return makeWorker(for: pair)
+    }
+
+    @available(macOS 26.0, iOS 26.0, *)
+    private func makeWorker(for pair: LanguagePair) -> AppleTranslationWorker {
         let worker = AppleTranslationWorker(
-            source: source,
-            target: target,
+            source: Locale.Language(identifier: pair.sourceCode),
+            target: Locale.Language(identifier: pair.targetCode),
             strategy: strategy
         )
         workers[pair] = worker

@@ -403,6 +403,7 @@ def benchmark_command(
     source_language: str,
     target_language: str,
     mt_backend: str,
+    mt_postedit: str,
     duration_seconds: float,
     trace_path: Path,
     uses_asr_stabilization: bool,
@@ -432,6 +433,8 @@ def benchmark_command(
             target_language,
             "--mt",
             mt_backend,
+            "--mt-postedit",
+            mt_postedit,
             "--asr",
             case.asr,
             "--latency",
@@ -500,6 +503,7 @@ def make_report(
     source_language: str,
     target_language: str,
     mt_backend: str,
+    mt_postedit: str,
     duration_seconds: float,
     cases: list[BenchmarkCase],
     results: list[RunResult],
@@ -555,6 +559,7 @@ def make_report(
         f"Source language: `{source_language}`",
         f"Target language: `{target_language}`",
         f"Translation: `{mt_backend}`",
+        f"Translation post-edit: `{mt_postedit}`",
         f"Output mode: `{'speech' if uses_speech_output else 'text'}`",
         f"Duration: `{format_number(duration_seconds)}s`",
         f"Output directory: `{output_dir}`",
@@ -641,6 +646,7 @@ def make_report(
                         source_language=source_language,
                         target_language=target_language,
                         mt_backend=mt_backend,
+                        mt_postedit=mt_postedit,
                         duration_seconds=duration_seconds,
                         trace_path=result.trace_path,
                         uses_asr_stabilization=uses_asr_stabilization,
@@ -791,9 +797,15 @@ def main() -> int:
     parser.add_argument("--to", default="tr", help="Target language code.")
     parser.add_argument(
         "--mt",
-        choices=["madlad", "apple"],
+        choices=["madlad", "apple", "translategemma"],
         default="madlad",
         help="Translation backend. Apple requires installed system language assets.",
+    )
+    parser.add_argument(
+        "--mt-postedit",
+        choices=["glossary", "none"],
+        default="glossary",
+        help="Translation post-edit mode.",
     )
     parser.add_argument("--duration", type=float, default=60.0, help="Seconds to process.")
     parser.add_argument(
@@ -983,6 +995,7 @@ def main() -> int:
             source_language=args.source_language,
             target_language=args.to,
             mt_backend=args.mt,
+            mt_postedit=args.mt_postedit,
             duration_seconds=args.duration,
             trace_path=trace_path,
             uses_asr_stabilization=args.asr_stabilization,
@@ -1031,6 +1044,7 @@ def main() -> int:
         source_language=args.source_language,
         target_language=args.to,
         mt_backend=args.mt,
+        mt_postedit=args.mt_postedit,
         duration_seconds=args.duration,
         cases=cases,
         results=results,

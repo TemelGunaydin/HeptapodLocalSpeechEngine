@@ -10,6 +10,9 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
     private let scriptURL: URL
     private let voicePromptURL: URL?
     private let device: String?
+    private let exaggeration: Double
+    private let cfgWeight: Double
+    private let temperature: Double
     private let outputSampleRate: Int
     private let timeoutSeconds: TimeInterval
     private let fileManager: FileManager
@@ -23,6 +26,9 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
         scriptURL: URL? = nil,
         voicePromptURL: URL? = nil,
         device: String? = nil,
+        exaggeration: Double = 0.5,
+        cfgWeight: Double = 0.5,
+        temperature: Double = 0.8,
         outputSampleRate: Int = HeptapodChatterboxTTSAdapter.defaultOutputSampleRate,
         timeoutSeconds: TimeInterval = 600,
         usesPersistentWorker: Bool = true,
@@ -36,6 +42,9 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
             ?? URL(fileURLWithPath: "Tools/chatterbox_tts.py")
         self.voicePromptURL = voicePromptURL
         self.device = device
+        self.exaggeration = exaggeration
+        self.cfgWeight = cfgWeight
+        self.temperature = temperature
         self.outputSampleRate = outputSampleRate
         self.timeoutSeconds = timeoutSeconds
         self.usesPersistentWorker = usesPersistentWorker
@@ -53,6 +62,15 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
         }
         if let voicePromptURL, fileManager.fileExists(atPath: voicePromptURL.path) == false {
             throw HeptapodChatterboxTTSError.missingVoicePrompt(voicePromptURL.path)
+        }
+        guard (0...1).contains(exaggeration) else {
+            throw HeptapodChatterboxTTSError.invalidParameter("exaggeration", exaggeration)
+        }
+        guard (0...1).contains(cfgWeight) else {
+            throw HeptapodChatterboxTTSError.invalidParameter("cfg_weight", cfgWeight)
+        }
+        guard temperature > 0, temperature <= 5 else {
+            throw HeptapodChatterboxTTSError.invalidParameter("temperature", temperature)
         }
         if usesPersistentWorker {
             _ = try ensureWorker(languageCode: languageCode ?? "en")
@@ -131,6 +149,11 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
         if let device, device.isEmpty == false {
             arguments.append(contentsOf: ["--device", device])
         }
+        arguments.append(contentsOf: [
+            "--exaggeration", String(exaggeration),
+            "--cfg-weight", String(cfgWeight),
+            "--temperature", String(temperature)
+        ])
         process.arguments = arguments
 
         let logDirectory = outputURL.deletingLastPathComponent()
@@ -184,7 +207,10 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
             language: languageCode,
             output: outputURL.path,
             voicePrompt: voicePromptURL?.path,
-            voiceID: voiceID
+            voiceID: voiceID,
+            exaggeration: exaggeration,
+            cfgWeight: cfgWeight,
+            temperature: temperature
         )
         let response = try worker.send(request)
         guard response.ok else {
@@ -205,6 +231,9 @@ public actor HeptapodChatterboxTTSAdapter: HeptapodSpeechSynthesizer {
             scriptURL: scriptURL,
             languageCode: languageCode,
             device: device,
+            exaggeration: exaggeration,
+            cfgWeight: cfgWeight,
+            temperature: temperature,
             warmsUp: warmsUpPersistentWorker,
             timeoutSeconds: timeoutSeconds,
             fileManager: fileManager
@@ -218,6 +247,7 @@ public enum HeptapodChatterboxTTSError: LocalizedError, Sendable {
     case emptyText
     case missingScript(String)
     case missingVoicePrompt(String)
+    case invalidParameter(String, Double)
     case timedOut(TimeInterval)
     case processFailed(status: Int32, output: String)
     case missingOutput(String, String)
@@ -231,6 +261,8 @@ public enum HeptapodChatterboxTTSError: LocalizedError, Sendable {
             "Chatterbox TTS script is missing at \(path). Pass --tts-script or set HEPTAPOD_CHATTERBOX_TTS_SCRIPT."
         case .missingVoicePrompt(let path):
             "Chatterbox voice prompt file is missing at \(path)."
+        case .invalidParameter(let name, let value):
+            "Invalid Chatterbox \(name) value: \(value)."
         case .timedOut(let seconds):
             "Chatterbox TTS timed out after \(Int(seconds)) seconds."
         case .processFailed(let status, let output):
@@ -250,6 +282,9 @@ private struct ChatterboxWorkerRequest: Codable {
     let output: String
     let voicePrompt: String?
     let voiceID: String?
+    let exaggeration: Double
+    let cfgWeight: Double
+    let temperature: Double
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -258,6 +293,9 @@ private struct ChatterboxWorkerRequest: Codable {
         case output
         case voicePrompt = "voice_prompt"
         case voiceID = "voice_id"
+        case exaggeration
+        case cfgWeight = "cfg_weight"
+        case temperature
     }
 }
 
@@ -296,6 +334,9 @@ private final class ChatterboxWorker {
         scriptURL: URL,
         languageCode: String,
         device: String?,
+        exaggeration: Double,
+        cfgWeight: Double,
+        temperature: Double,
         warmsUp: Bool,
         timeoutSeconds: TimeInterval,
         fileManager: FileManager
@@ -324,6 +365,11 @@ private final class ChatterboxWorker {
         if let device, device.isEmpty == false {
             arguments.append(contentsOf: ["--device", device])
         }
+        arguments.append(contentsOf: [
+            "--exaggeration", String(exaggeration),
+            "--cfg-weight", String(cfgWeight),
+            "--temperature", String(temperature)
+        ])
         if warmsUp {
             arguments.append("--warmup")
         }

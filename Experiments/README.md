@@ -55,7 +55,9 @@ Use `--punctuation-endpoint` to flush complete ASR sentences before the maximum
 buffer limit. Add `--speech-output --tts moss --play-output` to benchmark the
 streaming local speech path. Use `--tts chatterbox-mlx` for the quality mode.
 Use `--mt apple` to benchmark installed Apple Translation assets or
-`--mt madlad` for the model-backed translator.
+`--mt madlad` for the model-backed translator. `--mt translategemma` selects
+the experimental persistent MLX worker after running
+`Tools/setup_translategemma_mlx.sh`.
 The summary reports TTS first-audio latency separately from full output latency.
 The runner also prepares `mlx.metallib` after SwiftPM build so MLX can load its
 Metal kernels at runtime.
@@ -93,6 +95,50 @@ capture run.
 On machines where the active Xcode beta SDK is newer than the installed Swift
 compiler, the runner automatically builds with the latest compatible macOS SDK
 under `/Library/Developer/CommandLineTools/SDKs`.
+
+## Translation Quality Benchmark
+
+Compare translation backends with identical source text, independent of ASR:
+
+```bash
+xcrun swift run HeptapodTranslationBenchmark -- \
+  --backend apple \
+  --input Experiments/Fixtures/en-tr-translation-quality.json \
+  --output /tmp/apple-en-tr.json
+```
+
+The backend can be `apple`, `madlad`, or `translategemma`. Add `--postedit
+glossary --postedit-context 2` to measure the deterministic EN-to-TR post-edit
+stage, or `--postedit apple-foundation` to experiment with the on-device Apple
+Foundation Model when Apple Intelligence is enabled. The committed 2026-08-09
+comparisons and raw outputs are under `Results/`.
+
+The experimental Qwen contextual post-editor runs against an existing raw
+translation report:
+
+```bash
+Tools/setup_qwen_postedit_mlx.sh
+
+.venv-qwen-postedit/bin/python Tools/qwen_mlx_postedit_benchmark.py \
+  --input Experiments/Results/2026-08-09-translation-quality-apple-en-tr.json \
+  --output /tmp/apple-qwen-postedit-en-tr.json
+```
+
+It is retained for reproducibility and is not a recommended live backend.
+
+## Chatterbox Prosody Matrix
+
+Generate four deterministic Turkish listening samples while loading Chatterbox
+only once:
+
+```bash
+.venv-chatterbox-mlx/bin/python Tools/chatterbox_quality_matrix.py \
+  --output-dir /tmp/heptapod-chatterbox-quality-matrix
+```
+
+Add `--voice-prompt /path/to/turkish-reference.wav` to compare the same presets
+with a permitted native-language reference voice. Each run writes WAV files and
+a timing/parameter manifest.
 
 ## Result Template
 

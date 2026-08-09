@@ -1,0 +1,150 @@
+{
+  "source_language": "en",
+  "target_language": "tr",
+  "cases": [
+    {
+      "id": "basic-01",
+      "category": "basic",
+      "source": "Today we are testing local live translation.",
+      "reference": "Bugün yerel canlı çeviriyi test ediyoruz."
+    },
+    {
+      "id": "basic-02",
+      "category": "basic",
+      "source": "The translated voice should sound clear and natural.",
+      "reference": "Çevrilmiş ses net ve doğal duyulmalı."
+    },
+    {
+      "id": "relative-01",
+      "category": "word-order",
+      "source": "The book you recommended yesterday was much better than I expected.",
+      "reference": "Dün önerdiğin kitap beklediğimden çok daha iyiydi."
+    },
+    {
+      "id": "sequence-01",
+      "category": "word-order",
+      "source": "I will send you the report after I check the numbers one more time.",
+      "reference": "Rakamları bir kez daha kontrol ettikten sonra raporu sana göndereceğim."
+    },
+    {
+      "id": "contrast-01",
+      "category": "complex-sentence",
+      "source": "Although the connection was unstable, the meeting continued without interruption.",
+      "reference": "Bağlantı kararsız olmasına rağmen toplantı kesintisiz devam etti."
+    },
+    {
+      "id": "conditional-01",
+      "category": "complex-sentence",
+      "source": "If the latency stays below two seconds, most viewers will find the experience acceptable.",
+      "reference": "Gecikme iki saniyenin altında kalırsa çoğu izleyici bu deneyimi kabul edilebilir bulacaktır."
+    },
+    {
+      "id": "uncertainty-01",
+      "category": "modality",
+      "source": "The update may have fixed the crash, but we still need to test it under load.",
+      "reference": "Güncelleme çökmeyi düzeltmiş olabilir, ancak sistemi yine de yük altında test etmemiz gerekiyor."
+    },
+    {
+      "id": "negation-01",
+      "category": "negation",
+      "source": "We should not publish the result until we understand why the first run was slower.",
+      "reference": "İlk çalıştırmanın neden daha yavaş olduğunu anlamadan sonucu yayımlamamalıyız."
+    },
+    {
+      "id": "question-01",
+      "category": "question",
+      "source": "How much quality are we willing to trade for lower latency?",
+      "reference": "Daha düşük gecikme uğruna ne kadar kaliteden ödün vermeye hazırız?"
+    },
+    {
+      "id": "idiom-01",
+      "category": "idiom",
+      "source": "Let's not jump to conclusions before we hear both sides of the story.",
+      "reference": "Olayın iki tarafını da dinlemeden hemen sonuca varmayalım."
+    },
+    {
+      "id": "spoken-01",
+      "category": "spoken-language",
+      "source": "What I mean is, the model sounds fine in a demo, but real conversations are messier.",
+      "reference": "Demek istediğim şu: Model bir demoda iyi duyuluyor ama gerçek konuşmalar daha karmaşık oluyor."
+    },
+    {
+      "id": "spoken-02",
+      "category": "spoken-language",
+      "source": "To be honest, I did not expect the local version to work this well.",
+      "reference": "Açıkçası yerel sürümün bu kadar iyi çalışmasını beklemiyordum."
+    },
+    {
+      "id": "entity-01",
+      "category": "entities",
+      "source": "Dr. Ayşe Demir will join the call at 14:30 on March 12.",
+      "reference": "Dr. Ayşe Demir, 12 Mart saat 14.30'da görüşmeye katılacak."
+    },
+    {
+      "id": "number-01",
+      "category": "numbers",
+      "source": "The new model reduced average latency from 3.4 seconds to 1.8 seconds.",
+      "reference": "Yeni model ortalama gecikmeyi 3,4 saniyeden 1,8 saniyeye düşürdü."
+    },
+    {
+      "id": "technical-01",
+      "category": "technical",
+      "source": "The persistent worker keeps the model in memory so each sentence does not pay the startup cost.",
+      "reference": "Kalıcı worker modeli bellekte tuttuğu için her cümlede başlangıç maliyeti yeniden ödenmiyor."
+    },
+    {
+      "id": "technical-02",
+      "category": "technical",
+      "source": "Only stable transcript prefixes should be sent to the translation queue.",
+      "reference": "Çeviri kuyruğuna yalnızca kararlı transkript önekleri gönderilmelidir."
+    },
+    {
+      "id": "causal-01",
+      "category": "complex-sentence",
+      "source": "Playback started late because speech synthesis waited for the entire paragraph.",
+      "reference": "Ses sentezi paragrafın tamamını beklediği için oynatma geç başladı."
+    },
+    {
+      "id": "passive-01",
+      "category": "passive",
+      "source": "The release was postponed after two critical audio bugs were discovered.",
+      "reference": "İki kritik ses hatası bulununca sürüm ertelendi."
+    },
+    {
+      "id": "purpose-01",
+      "category": "complex-sentence",
+      "source": "We shortened the segments so translated speech could begin while the speaker was still talking.",
+      "reference": "Çevrilmiş konuşma, konuşmacı hâlâ konuşurken başlayabilsin diye segmentleri kısalttık."
+    },
+    {
+      "id": "comparison-01",
+      "category": "comparison",
+      "source": "A slightly slower but natural voice is more useful than a fast voice that is hard to understand.",
+      "reference": "Biraz daha yavaş ama doğal bir ses, hızlı fakat anlaşılması zor bir sesten daha kullanışlıdır."
+    },
+    {
+      "id": "phrasal-01",
+      "category": "phrasal-verb",
+      "source": "We ran into a problem when the audio output format changed between segments.",
+      "reference": "Segmentler arasında ses çıkış biçimi değişince bir sorunla karşılaştık."
+    },
+    {
+      "id": "quote-01",
+      "category": "reported-speech",
+      "source": "She said, \"I will call you as soon as the download finishes.\"",
+      "reference": "\"İndirme biter bitmez seni arayacağım,\" dedi."
+    },
+    {
+      "id": "list-01",
+      "category": "list",
+      "source": "The test covers clear speech, background music, short pauses, and sudden volume changes.",
+      "reference": "Test; net konuşmayı, arka plan müziğini, kısa duraklamaları ve ani ses değişikliklerini kapsıyor."
+    },
+    {
+      "id": "context-01",
+      "category": "multi-sentence-context",
+      "source": "Maya reviewed the transcript before the meeting. She noticed that one sentence had been translated in the wrong order.",
+      "reference": "Maya toplantıdan önce transkripti inceledi. Bir cümlenin yanlış sırayla çevrildiğini fark etti."
+    }
+  ]
+}
