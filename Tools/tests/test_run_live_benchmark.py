@@ -12,6 +12,28 @@ import run_live_benchmark as benchmark  # noqa: E402
 
 
 class RunLiveBenchmarkTests(unittest.TestCase):
+    def test_parse_case_rejects_empty_label(self) -> None:
+        with self.assertRaises(benchmark.argparse.ArgumentTypeError):
+            benchmark.parse_case(":compact:1.0:4")
+
+    def test_validate_cases_rejects_duplicate_labels(self) -> None:
+        cases = [
+            benchmark.BenchmarkCase("smoke", "compact", 1.0, 4),
+            benchmark.BenchmarkCase("smoke", "quality", 1.0, 4),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "duplicate benchmark case label"):
+            benchmark.validate_cases(cases)
+
+    def test_validate_cases_rejects_colliding_slugs(self) -> None:
+        cases = [
+            benchmark.BenchmarkCase("quality smoke", "compact", 1.0, 4),
+            benchmark.BenchmarkCase("quality-smoke", "quality", 1.0, 4),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "same output slug"):
+            benchmark.validate_cases(cases)
+
     def test_command_uses_selected_binary_and_postedit_mode(self) -> None:
         command = benchmark.benchmark_command(
             benchmark.BenchmarkCase("smoke", "compact", 1.0, 4),

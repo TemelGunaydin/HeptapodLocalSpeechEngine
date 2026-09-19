@@ -14,6 +14,10 @@ public protocol HeptapodStreamingSpeechPlaybackSink: HeptapodSpeechPlaybackSink 
     ) async throws
 }
 
+public protocol HeptapodCancellableSpeechPlaybackSink: HeptapodSpeechPlaybackSink {
+    func cancelPlayback() async
+}
+
 public protocol HeptapodPlaybackBacklogAware: Sendable {
     func setPlaybackBacklog(segmentCount: Int) async
 }
@@ -96,6 +100,7 @@ public struct HeptapodSentenceEndpointingConfiguration: Sendable {
     public let flushOnStreamEnd: Bool
     public let flushOnTerminalPunctuation: Bool
     public let maximumBufferedSegments: Int
+    public let maximumPendingOutputs: Int
     public let minimumWordsForPunctuationEndpoint: Int
     public let minimumSilenceEndpointDuration: TimeInterval
     public let asrStabilization: HeptapodASRStabilizationConfiguration
@@ -105,6 +110,7 @@ public struct HeptapodSentenceEndpointingConfiguration: Sendable {
         flushOnStreamEnd: Bool = true,
         flushOnTerminalPunctuation: Bool = false,
         maximumBufferedSegments: Int = 8,
+        maximumPendingOutputs: Int = 2,
         minimumWordsForPunctuationEndpoint: Int = 8,
         minimumSilenceEndpointDuration: TimeInterval = 0.35,
         asrStabilization: HeptapodASRStabilizationConfiguration = .disabled
@@ -113,6 +119,7 @@ public struct HeptapodSentenceEndpointingConfiguration: Sendable {
         self.flushOnStreamEnd = flushOnStreamEnd
         self.flushOnTerminalPunctuation = flushOnTerminalPunctuation
         self.maximumBufferedSegments = maximumBufferedSegments
+        self.maximumPendingOutputs = max(1, maximumPendingOutputs)
         self.minimumWordsForPunctuationEndpoint = minimumWordsForPunctuationEndpoint
         self.minimumSilenceEndpointDuration = max(0, minimumSilenceEndpointDuration)
         self.asrStabilization = asrStabilization
@@ -177,12 +184,17 @@ public actor HeptapodLiveSpeechSession {
         let outputMode = outputMode
 
         return AsyncThrowingStream { continuation in
-            let playbackQueue = LivePlaybackQueue(sink: playbackSink, continuation: continuation)
+            let playbackQueue = LivePlaybackQueue(
+                sink: playbackSink,
+                continuation: continuation,
+                maximumPendingSegments: 2
+            )
             let task = Task {
                 do {
                     var index = 0
                     for try await chunk in chunks {
                         index += 1
+                        try await playbackQueue.checkHealthy()
                         continuation.yield(.segmentStarted(index: index))
                         continuation.yield(.audioLevel(index: index, .measured(from: chunk)))
 
@@ -213,6 +225,8 @@ public actor HeptapodLiveSpeechSession {
                                 index: index,
                                 playbackQueue: playbackQueue
                             )
+                            try Task.checkCancellation()
+                            try await playbackQueue.checkHealthy()
                             let result = HeptapodSpeechToSpeechResult(
                                 transcript: transcript,
                                 translation: translation,
@@ -239,6 +253,7 @@ public actor HeptapodLiveSpeechSession {
                     try await playbackQueue.drain()
                     continuation.finish()
                 } catch {
+                    await playbackQueue.cancel()
                     continuation.finish(throwing: error)
                 }
             }
@@ -264,7 +279,11 @@ public actor HeptapodLiveSpeechSession {
         let outputMode = outputMode
 
         return AsyncThrowingStream { continuation in
-            let playbackQueue = LivePlaybackQueue(sink: playbackSink, continuation: continuation)
+            let playbackQueue = LivePlaybackQueue(
+                sink: playbackSink,
+                continuation: continuation,
+                maximumPendingSegments: endpointing.maximumPendingOutputs
+            )
             let synthesisQueue = LiveSynthesisQueue(
                 pipeline: pipeline,
                 sourceLanguageCode: sourceLanguageCode,
@@ -272,7 +291,8 @@ public actor HeptapodLiveSpeechSession {
                 voiceID: voiceID,
                 playbackQueue: playbackQueue,
                 continuation: continuation,
-                outputMode: outputMode
+                outputMode: outputMode,
+                maximumPendingOutputs: endpointing.maximumPendingOutputs
             )
             let task = Task {
                 do {
@@ -282,6 +302,8 @@ public actor HeptapodLiveSpeechSession {
 
                     for try await chunk in chunks {
                         index += 1
+                        try await synthesisQueue.checkHealthy()
+                        try await playbackQueue.checkHealthy()
                         continuation.yield(.segmentStarted(index: index))
                         continuation.yield(.audioLevel(index: index, .measured(from: chunk)))
 
@@ -408,6 +430,8 @@ public actor HeptapodLiveSpeechSession {
                     try await playbackQueue.drain()
                     continuation.finish()
                 } catch {
+                    await synthesisQueue.cancel()
+                    await playbackQueue.cancel()
                     continuation.finish(throwing: error)
                 }
             }
@@ -1133,6 +1157,10 @@ private struct SlidingASRStabilizer {
     }
 
     mutating func append(_ chunk: HeptapodAudioChunk) -> HeptapodAudioChunk {
+        if let first = chunks.first,
+           first.sampleRate != chunk.sampleRate || first.channelCount != chunk.channelCount {
+            chunks.removeAll(keepingCapacity: true)
+        }
         chunks.append(chunk)
         if chunks.count > configuration.maximumWindowChunks {
             chunks.removeFirst(chunks.count - configuration.maximumWindowChunks)
@@ -1565,8 +1593,20 @@ private struct SlidingASRStabilizer {
         for chunk in chunks {
             data.append(chunk.pcm16)
         }
-        return HeptapodAudioChunk(pcm16: data, sampleRate: first.sampleRate)
+        return HeptapodAudioChunk(
+            pcm16: data,
+            sampleRate: first.sampleRate,
+            channelCount: first.channelCount
+        )
     }
+}
+
+private func awaitLiveQueueTask(_ task: Task<Void, Error>) async throws {
+    try await withTaskCancellationHandler(operation: {
+        try await task.value
+    }, onCancel: {
+        task.cancel()
+    })
 }
 
 private actor LiveSynthesisQueue {
@@ -1577,8 +1617,11 @@ private actor LiveSynthesisQueue {
     private let playbackQueue: LivePlaybackQueue
     private let continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
     private let outputMode: HeptapodLiveOutputMode
-    private var tail: Task<Void, Error>?
+    private let maximumPendingOutputs: Int
+    private var tasks: [Task<Void, Error>] = []
     private var queuedOutputCount = 0
+    private var isCancelled = false
+    private var failure: Error?
 
     init(
         pipeline: HeptapodSpeechToSpeechPipeline,
@@ -1587,7 +1630,8 @@ private actor LiveSynthesisQueue {
         voiceID: String?,
         playbackQueue: LivePlaybackQueue,
         continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation,
-        outputMode: HeptapodLiveOutputMode
+        outputMode: HeptapodLiveOutputMode,
+        maximumPendingOutputs: Int
     ) {
         self.pipeline = pipeline
         self.sourceLanguageCode = sourceLanguageCode
@@ -1596,25 +1640,62 @@ private actor LiveSynthesisQueue {
         self.playbackQueue = playbackQueue
         self.continuation = continuation
         self.outputMode = outputMode
+        self.maximumPendingOutputs = max(1, maximumPendingOutputs)
     }
 
-    func enqueue(index: Int, transcript: HeptapodTranscriptSegment) {
+    func enqueue(index: Int, transcript: HeptapodTranscriptSegment) async {
+        guard Task.isCancelled == false else {
+            return
+        }
+        guard isCancelled == false, failure == nil else {
+            return
+        }
+
+        while tasks.count >= maximumPendingOutputs {
+            guard let oldest = tasks.first else {
+                break
+            }
+            do {
+                try await awaitLiveQueueTask(oldest)
+            } catch {
+                recordFailure(error)
+            }
+            if tasks.isEmpty == false {
+                tasks.removeFirst()
+            }
+            guard Task.isCancelled == false else {
+                return
+            }
+            guard isCancelled == false, failure == nil else {
+                return
+            }
+        }
+
+        guard Task.isCancelled == false else {
+            return
+        }
+        guard isCancelled == false, failure == nil else {
+            return
+        }
         if outputMode == .speech {
             continuation.yield(.transcript(index: index, transcript))
         }
         queuedOutputCount += 1
         continuation.yield(.outputQueued(index: index, backlog: queuedOutputCount))
-        let previous = tail
-        tail = Task {
+        let previous = tasks.last
+        let task = Task { [self] in
             do {
                 try await previous?.value
                 try Task.checkCancellation()
+                try checkHealthy()
                 continuation.yield(.translationStarted(index: index))
                 let translation = try await pipeline.translateTranscript(
                     transcript,
                     sourceLanguageCode: sourceLanguageCode,
                     targetLanguageCode: targetLanguageCode
                 )
+                try Task.checkCancellation()
+                try checkHealthy()
                 continuation.yield(.translationCompleted(index: index))
 
                 switch outputMode {
@@ -1627,6 +1708,9 @@ private actor LiveSynthesisQueue {
                         index: index,
                         playbackQueue: playbackQueue
                     )
+                    try Task.checkCancellation()
+                    try checkHealthy()
+                    try await playbackQueue.checkHealthy()
                     let result = HeptapodSpeechToSpeechResult(
                         transcript: transcript,
                         translation: translation,
@@ -1634,61 +1718,137 @@ private actor LiveSynthesisQueue {
                     )
                     continuation.yield(.result(index: index, result))
                 case .textOnly:
+                    try Task.checkCancellation()
+                    try checkHealthy()
                     continuation.yield(.translation(
                         index: index,
                         HeptapodLiveTranslationResult(transcript: transcript, translation: translation)
                     ))
                 }
-                await outputFinished()
+                outputFinished()
             } catch {
-                await outputFinished()
+                outputFinished()
+                recordFailure(error)
                 throw error
             }
         }
+        tasks.append(task)
     }
 
     private func outputFinished() {
         queuedOutputCount = max(0, queuedOutputCount - 1)
     }
 
-    func drain() async throws {
-        try await tail?.value
+    private func recordFailure(_ error: Error) {
+        guard isCancelled == false,
+              failure == nil,
+              error is CancellationError == false else {
+            return
+        }
+        failure = error
+        continuation.finish(throwing: error)
     }
 
-    func cancel() {
-        tail?.cancel()
+    func checkHealthy() throws {
+        if let failure {
+            throw failure
+        }
+        if isCancelled {
+            throw CancellationError()
+        }
+    }
+
+    func drain() async throws {
+        while tasks.isEmpty == false {
+            let oldest = tasks[0]
+            do {
+                try await awaitLiveQueueTask(oldest)
+            } catch {
+                if let failure {
+                    throw failure
+                }
+                throw error
+            }
+            if tasks.isEmpty == false {
+                tasks.removeFirst()
+            }
+            try Task.checkCancellation()
+        }
+        try checkHealthy()
+    }
+
+    func cancel() async {
+        guard isCancelled == false else {
+            return
+        }
+        isCancelled = true
+        for task in tasks {
+            task.cancel()
+        }
+        tasks.removeAll()
+        queuedOutputCount = 0
     }
 }
 
 private actor LivePlaybackQueue {
     private let sink: (any HeptapodSpeechPlaybackSink)?
     private let continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
-    private var tail: Task<Void, Error>?
+    private let maximumPendingSegments: Int
+    private var tasks: [Task<Void, Error>] = []
+    private var activeRelays: [LiveSpeechStreamRelay] = []
     private var queuedSegmentCount = 0
+    private var isCancelled = false
+    private var failure: Error?
 
     init(
         sink: (any HeptapodSpeechPlaybackSink)?,
-        continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
+        continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation,
+        maximumPendingSegments: Int
     ) {
         self.sink = sink
         self.continuation = continuation
+        self.maximumPendingSegments = max(1, maximumPendingSegments)
     }
 
     func enqueue(
         index: Int,
-        speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
-    ) async -> Bool {
+        speechStream: HeptapodLiveSpeechStream,
+        relay: LiveSpeechStreamRelay
+    ) async throws -> Bool {
+        try checkHealthy()
         guard let sink else {
             return false
         }
 
+        while tasks.count >= maximumPendingSegments {
+            guard let oldest = tasks.first else {
+                break
+            }
+            do {
+                try await awaitLiveQueueTask(oldest)
+            } catch {
+                if let failure {
+                    throw failure
+                }
+                throw error
+            }
+            if tasks.isEmpty == false {
+                tasks.removeFirst()
+            }
+            try Task.checkCancellation()
+            try checkHealthy()
+        }
+
+        try checkHealthy()
+        activeRelays.append(relay)
         queuedSegmentCount += 1
         continuation.yield(.playbackQueued(index: index, backlog: queuedSegmentCount))
-        let previous = tail
-        tail = Task {
+        let previous = tasks.last
+        let task = Task { [self] in
             do {
                 try await previous?.value
                 try Task.checkCancellation()
+                try checkHealthy()
                 if let streamingSink = sink as? any HeptapodStreamingSpeechPlaybackSink {
                     try await playStreamingSpeech(
                         index: index,
@@ -1698,27 +1858,51 @@ private actor LivePlaybackQueue {
                     )
                 } else {
                     let speech = try await collectSpeech(from: speechStream)
+                    try Task.checkCancellation()
+                    try checkHealthy()
                     continuation.yield(.playbackStarted(index: index))
                     try await sink.play(speech)
                 }
+                try Task.checkCancellation()
+                try checkHealthy()
                 continuation.yield(.playbackCompleted(index: index))
-                await playbackFinished(using: sink)
+                await playbackFinished(using: sink, relay: relay)
             } catch {
-                await playbackFinished(using: sink)
+                recordFailure(error, relay: relay)
+                await playbackFinished(using: sink, relay: relay)
                 throw error
             }
         }
+        tasks.append(task)
         await updateBacklog(for: sink)
         return true
     }
 
     func markFirstAudioReady(index: Int) {
+        guard isCancelled == false, failure == nil else {
+            return
+        }
         continuation.yield(.synthesisAudioReady(index: index))
     }
 
-    private func playbackFinished(using sink: any HeptapodSpeechPlaybackSink) async {
+    private func playbackFinished(
+        using sink: any HeptapodSpeechPlaybackSink,
+        relay: LiveSpeechStreamRelay
+    ) async {
         queuedSegmentCount = max(0, queuedSegmentCount - 1)
+        activeRelays.removeAll { $0 === relay }
         await updateBacklog(for: sink)
+    }
+
+    private func recordFailure(_ error: Error, relay: LiveSpeechStreamRelay) {
+        guard isCancelled == false,
+              failure == nil,
+              error is CancellationError == false else {
+            return
+        }
+        failure = error
+        relay.finish(throwing: error)
+        continuation.finish(throwing: error)
     }
 
     private func updateBacklog(for sink: any HeptapodSpeechPlaybackSink) async {
@@ -1728,12 +1912,56 @@ private actor LivePlaybackQueue {
         await backlogAwareSink.setPlaybackBacklog(segmentCount: queuedSegmentCount)
     }
 
-    func drain() async throws {
-        try await tail?.value
+    func checkHealthy() throws {
+        if let failure {
+            throw failure
+        }
+        if isCancelled {
+            throw CancellationError()
+        }
     }
 
-    func cancel() {
-        tail?.cancel()
+    func drain() async throws {
+        while tasks.isEmpty == false {
+            let oldest = tasks[0]
+            do {
+                try await awaitLiveQueueTask(oldest)
+            } catch {
+                if let failure {
+                    throw failure
+                }
+                throw error
+            }
+            if tasks.isEmpty == false {
+                tasks.removeFirst()
+            }
+            try Task.checkCancellation()
+        }
+        try checkHealthy()
+    }
+
+    func cancel() async {
+        guard isCancelled == false else {
+            return
+        }
+        isCancelled = true
+        for task in tasks {
+            task.cancel()
+        }
+        for relay in activeRelays {
+            relay.finish(throwing: CancellationError())
+        }
+        tasks.removeAll()
+        activeRelays.removeAll()
+        queuedSegmentCount = 0
+
+        guard let sink else {
+            return
+        }
+        await updateBacklog(for: sink)
+        if let cancellableSink = sink as? any HeptapodCancellableSpeechPlaybackSink {
+            await cancellableSink.cancelPlayback()
+        }
     }
 }
 
@@ -1746,13 +1974,22 @@ private func synthesizeForLivePlayback(
 ) async throws -> HeptapodSynthesizedSpeech {
     let sourceStream = await pipeline.synthesizeLiveStream(translation, voiceID: voiceID)
     let relay = LiveSpeechStreamRelay()
-    let isPlaybackEnqueued = await playbackQueue.enqueue(index: index, speechStream: relay.stream)
+    let isPlaybackEnqueued = try await playbackQueue.enqueue(
+        index: index,
+        speechStream: .native(relay.stream),
+        relay: relay
+    )
 
     var pcm16 = Data()
     var sampleRate: Int?
     var didMarkFirstAudioReady = false
     do {
         for try await chunk in sourceStream {
+            try Task.checkCancellation()
+            try await playbackQueue.checkHealthy()
+            guard chunk.pcm16.isEmpty == false else {
+                continue
+            }
             if let sampleRate, sampleRate != chunk.sampleRate {
                 throw LiveSpeechStreamingError.inconsistentSampleRate(sampleRate, chunk.sampleRate)
             }
@@ -1766,6 +2003,8 @@ private func synthesizeForLivePlayback(
                 relay.yield(chunk)
             }
         }
+        try Task.checkCancellation()
+        try await playbackQueue.checkHealthy()
         if isPlaybackEnqueued {
             relay.finish()
         }
@@ -1787,12 +2026,16 @@ private func synthesizeForLivePlayback(
 }
 
 private func collectSpeech(
-    from stream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
+    from stream: HeptapodLiveSpeechStream
 ) async throws -> HeptapodSynthesizedSpeech {
     var pcm16 = Data()
     var sampleRate: Int?
     var languageCode: String?
     for try await chunk in stream {
+        try Task.checkCancellation()
+        guard chunk.pcm16.isEmpty == false else {
+            continue
+        }
         if let sampleRate, sampleRate != chunk.sampleRate {
             throw LiveSpeechStreamingError.inconsistentSampleRate(sampleRate, chunk.sampleRate)
         }
@@ -1812,7 +2055,7 @@ private func collectSpeech(
 
 private func playStreamingSpeech(
     index: Int,
-    speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>,
+    speechStream: HeptapodLiveSpeechStream,
     sink: any HeptapodStreamingSpeechPlaybackSink,
     continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
 ) async throws {
@@ -1825,6 +2068,10 @@ private func playStreamingSpeech(
             var didYieldAudio = false
             do {
                 for try await speech in speechStream {
+                    try Task.checkCancellation()
+                    guard speech.pcm16.isEmpty == false else {
+                        continue
+                    }
                     if didYieldAudio == false {
                         continuation.yield(.playbackStarted(index: index))
                         didYieldAudio = true
@@ -1834,6 +2081,7 @@ private func playStreamingSpeech(
                 guard didYieldAudio else {
                     throw LiveSpeechStreamingError.emptySynthesis
                 }
+                try Task.checkCancellation()
                 relay.finish()
             } catch {
                 relay.finish(throwing: error)

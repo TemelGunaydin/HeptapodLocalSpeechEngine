@@ -880,7 +880,8 @@ func speechSynthesisChunkerSplitsLongSentencesAtClauses() {
     #expect(chunks == [
         "Bir iki üç dört beş,",
         "altı yedi sekiz dokuz on;",
-        "on bir on iki on üç on dört."
+        "on bir on iki on üç",
+        "on dört."
     ])
 }
 

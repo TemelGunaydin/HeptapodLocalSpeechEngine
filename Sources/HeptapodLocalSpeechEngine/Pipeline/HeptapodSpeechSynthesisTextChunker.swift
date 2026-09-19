@@ -2,13 +2,18 @@ import Foundation
 import NaturalLanguage
 
 enum HeptapodSpeechSynthesisTextChunker {
+    private struct Chunk {
+        let range: Range<String.Index>
+        let wordCount: Int
+    }
+
     static func chunks(
         in text: String,
         maximumWordsPerChunk: Int = 18,
         minimumWordsPerChunk: Int = 4
     ) -> [String] {
-        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedText.isEmpty == false else {
+        let trimmedTextRange = trimmedRange(in: text, range: text.startIndex..<text.endIndex)
+        guard trimmedTextRange.isEmpty == false else {
             return []
         }
 
@@ -17,152 +22,179 @@ enum HeptapodSpeechSynthesisTextChunker {
             max(1, minimumWordsPerChunk),
             maximumWordsPerChunk
         )
-        let naturalChunks = sentences(in: trimmedText).flatMap { sentence in
+        let naturalChunks = sentenceRanges(in: text, range: trimmedTextRange).flatMap { sentenceRange in
             splitLongSentence(
-                sentence,
+                in: text,
+                range: sentenceRange,
                 maximumWordsPerChunk: maximumWordsPerChunk
             )
         }
-
-        return mergeShortChunks(
+        let mergedChunks = mergeShortChunks(
             naturalChunks,
             maximumWordsPerChunk: maximumWordsPerChunk,
             minimumWordsPerChunk: minimumWordsPerChunk
         )
+
+        return mergedChunks.map { chunk in
+            String(text[chunk.range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
     }
 
-    private static func sentences(in text: String) -> [String] {
+    private static func sentenceRanges(
+        in text: String,
+        range: Range<String.Index>
+    ) -> [Range<String.Index>] {
         let tokenizer = NLTokenizer(unit: .sentence)
         tokenizer.string = text
-        var sentences: [String] = []
-        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
-            let sentence = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if sentence.isEmpty == false {
-                sentences.append(sentence)
+        var ranges: [Range<String.Index>] = []
+        tokenizer.enumerateTokens(in: range) { tokenRange, _ in
+            let trimmed = trimmedRange(in: text, range: tokenRange)
+            if trimmed.isEmpty == false {
+                ranges.append(trimmed)
             }
             return true
         }
-        return sentences.isEmpty ? [text] : sentences
+        return ranges.isEmpty ? [trimmedRange(in: text, range: range)] : ranges
     }
 
     private static func splitLongSentence(
-        _ sentence: String,
+        in text: String,
+        range: Range<String.Index>,
         maximumWordsPerChunk: Int
-    ) -> [String] {
-        guard wordCount(in: sentence) > maximumWordsPerChunk else {
-            return [sentence]
+    ) -> [Chunk] {
+        let words = wordRanges(in: text, range: range)
+        guard words.count > maximumWordsPerChunk else {
+            return [Chunk(range: range, wordCount: words.count)]
         }
 
-        let clauses = clauses(in: sentence)
-        guard clauses.count > 1 else {
-            return [sentence]
-        }
+        var chunks: [Chunk] = []
+        var startWordIndex = 0
+        while startWordIndex < words.count {
+            let maximumEndIndex = min(startWordIndex + maximumWordsPerChunk, words.count)
+            var endWordIndex = maximumEndIndex
 
-        var chunks: [String] = []
-        var pending = ""
-        for clause in clauses {
-            let candidate = joined(pending, clause)
-            if pending.isEmpty || wordCount(in: candidate) <= maximumWordsPerChunk {
-                pending = candidate
-            } else {
-                chunks.append(pending)
-                pending = clause
+            // Prefer a clause boundary inside the maximum-sized window. If a
+            // clause itself is longer than the limit, the hard word boundary
+            // below is still used instead of returning an oversized chunk.
+            if maximumEndIndex < words.count {
+                for candidateEndIndex in stride(
+                    from: maximumEndIndex,
+                    through: startWordIndex + 1,
+                    by: -1
+                ) {
+                    let gap = words[candidateEndIndex - 1].upperBound..<words[candidateEndIndex].lowerBound
+                    if text[gap].contains(where: { character in
+                        character == "," || character == ";" || character == ":"
+                    }) {
+                        endWordIndex = candidateEndIndex
+                        break
+                    }
+                }
             }
-        }
-        if pending.isEmpty == false {
-            chunks.append(pending)
+
+            let chunkStart = words[startWordIndex].lowerBound
+            let chunkEnd = endWordIndex < words.count
+                ? words[endWordIndex].lowerBound
+                : range.upperBound
+            let chunkRange = trimmedRange(in: text, range: chunkStart..<chunkEnd)
+            chunks.append(Chunk(
+                range: chunkRange,
+                wordCount: endWordIndex - startWordIndex
+            ))
+            startWordIndex = endWordIndex
         }
         return chunks
     }
 
-    private static func clauses(in sentence: String) -> [String] {
-        let terminators: Set<Character> = [",", ";", ":"]
-        var clauses: [String] = []
-        var clauseStart = sentence.startIndex
-
-        for index in sentence.indices where terminators.contains(sentence[index]) {
-            let clauseEnd = sentence.index(after: index)
-            let clause = String(sentence[clauseStart..<clauseEnd])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if clause.isEmpty == false {
-                clauses.append(clause)
-            }
-            clauseStart = clauseEnd
-        }
-
-        if clauseStart < sentence.endIndex {
-            let clause = String(sentence[clauseStart..<sentence.endIndex])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if clause.isEmpty == false {
-                clauses.append(clause)
-            }
-        }
-        return clauses
-    }
-
     private static func mergeShortChunks(
-        _ chunks: [String],
+        _ chunks: [Chunk],
         maximumWordsPerChunk: Int,
         minimumWordsPerChunk: Int
-    ) -> [String] {
-        var merged: [String] = []
-        var pending = ""
+    ) -> [Chunk] {
+        var merged: [Chunk] = []
+        var pending: Chunk?
 
         for chunk in chunks {
-            guard wordCount(in: chunk) < minimumWordsPerChunk else {
-                if pending.isEmpty == false {
-                    let candidate = joined(pending, chunk)
-                    if wordCount(in: candidate) <= maximumWordsPerChunk {
-                        merged.append(candidate)
+            if chunk.wordCount < minimumWordsPerChunk {
+                if let current = pending {
+                    if current.wordCount + chunk.wordCount <= maximumWordsPerChunk {
+                        pending = merge(current, chunk)
                     } else {
-                        merged.append(pending)
-                        merged.append(chunk)
+                        merged.append(current)
+                        pending = chunk
                     }
-                    pending = ""
                 } else {
-                    merged.append(chunk)
+                    pending = chunk
                 }
                 continue
             }
 
-            if let last = merged.last {
-                let candidate = joined(last, chunk)
-                if wordCount(in: candidate) <= maximumWordsPerChunk {
-                    merged[merged.count - 1] = candidate
+            if let current = pending {
+                if let last = merged.last,
+                   last.wordCount + current.wordCount <= maximumWordsPerChunk {
+                    merged[merged.count - 1] = merge(last, current)
+                } else if current.wordCount + chunk.wordCount <= maximumWordsPerChunk {
+                    merged.append(merge(current, chunk))
+                    pending = nil
                     continue
+                } else {
+                    merged.append(current)
                 }
+                pending = nil
             }
-            pending = joined(pending, chunk)
+            merged.append(chunk)
         }
 
-        if pending.isEmpty == false {
-            if merged.isEmpty {
-                merged.append(pending)
+        if let current = pending {
+            if let last = merged.last,
+               last.wordCount + current.wordCount <= maximumWordsPerChunk {
+                merged[merged.count - 1] = merge(last, current)
             } else {
-                merged[merged.count - 1] = joined(merged[merged.count - 1], pending)
+                merged.append(current)
             }
         }
+
         return merged
     }
 
-    private static func wordCount(in text: String) -> Int {
-        let tokenizer = NLTokenizer(unit: .word)
-        tokenizer.string = text
-        var count = 0
-        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { _, _ in
-            count += 1
-            return true
-        }
-        return count
+    private static func merge(_ lhs: Chunk, _ rhs: Chunk) -> Chunk {
+        Chunk(
+            range: lhs.range.lowerBound..<rhs.range.upperBound,
+            wordCount: lhs.wordCount + rhs.wordCount
+        )
     }
 
-    private static func joined(_ lhs: String, _ rhs: String) -> String {
-        if lhs.isEmpty {
-            return rhs
+    private static func wordRanges(
+        in text: String,
+        range: Range<String.Index>
+    ) -> [Range<String.Index>] {
+        let tokenizer = NLTokenizer(unit: .word)
+        tokenizer.string = text
+        var ranges: [Range<String.Index>] = []
+        tokenizer.enumerateTokens(in: range) { tokenRange, _ in
+            ranges.append(tokenRange)
+            return true
         }
-        if rhs.isEmpty {
-            return lhs
+        return ranges
+    }
+
+    private static func trimmedRange(
+        in text: String,
+        range: Range<String.Index>
+    ) -> Range<String.Index> {
+        var lowerBound = range.lowerBound
+        var upperBound = range.upperBound
+
+        while lowerBound < upperBound, text[lowerBound].isWhitespace {
+            lowerBound = text.index(after: lowerBound)
         }
-        return "\(lhs) \(rhs)"
+        while upperBound > lowerBound {
+            let previous = text.index(before: upperBound)
+            guard text[previous].isWhitespace else {
+                break
+            }
+            upperBound = previous
+        }
+        return lowerBound..<upperBound
     }
 }

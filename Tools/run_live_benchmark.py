@@ -83,6 +83,9 @@ def parse_case(value: str) -> BenchmarkCase:
         )
 
     label, asr, raw_chunk, raw_buffer = parts
+    label = label.strip()
+    if not label:
+        raise argparse.ArgumentTypeError("label must not be empty")
     asr = asr.lower()
     if asr not in {"compact", "quality"}:
         raise argparse.ArgumentTypeError("asr must be compact or quality")
@@ -103,6 +106,18 @@ def parse_case(value: str) -> BenchmarkCase:
         raise argparse.ArgumentTypeError("max_buffered_segments must be positive")
 
     return BenchmarkCase(label, asr, chunk_duration, max_buffered_segments)
+
+
+def validate_cases(cases: list[BenchmarkCase]) -> None:
+    labels: set[str] = set()
+    slugs: set[str] = set()
+    for case in cases:
+        if case.label in labels:
+            raise ValueError(f"duplicate benchmark case label: {case.label}")
+        if case.slug in slugs:
+            raise ValueError(f"benchmark case labels produce the same output slug: {case.slug}")
+        labels.add(case.label)
+        slugs.add(case.slug)
 
 
 def run_command(
@@ -922,6 +937,10 @@ def main() -> int:
         else tts_python_value
     )
     cases = args.cases or default_cases(args.preset)
+    try:
+        validate_cases(cases)
+    except ValueError as error:
+        parser.error(str(error))
 
     if args.duration <= 0:
         parser.error("--duration must be positive")
