@@ -4,28 +4,43 @@ import HeptapodLocalSpeechEngine
 
 public actor HeptapodAVAudioPlaybackSink:
     HeptapodStreamingSpeechPlaybackSink,
+    HeptapodCancellableSpeechPlaybackSink,
     HeptapodPlaybackBacklogAware
 {
+    private struct ScheduledBuffer {
+        let duration: TimeInterval
+        let completion: Task<Void, Never>
+    }
+
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let timePitch = AVAudioUnitTimePitch()
     private let basePlaybackRate: Float
     private let maximumPlaybackRate: Float
     private let startupBufferDuration: TimeInterval
+    private let maximumBufferedDuration: TimeInterval
     private var isPrepared = false
     private var playbackSampleRate: Double?
     private var playbackChannelCount: AVAudioChannelCount?
     private var requestedPlaybackRate: Float
+    private var scheduledBuffers: [ScheduledBuffer] = []
+    private var bufferedDuration: TimeInterval = 0
+    private var playbackGeneration = 0
 
     public init(
         playbackRate: Float = 1,
         maximumPlaybackRate: Float = 1.15,
-        startupBufferDuration: TimeInterval = 0.16
+        startupBufferDuration: TimeInterval = 0.16,
+        maximumBufferedDuration: TimeInterval = 1.0
     ) {
         let normalizedPlaybackRate = min(max(playbackRate, 0.5), 2)
         basePlaybackRate = normalizedPlaybackRate
         self.maximumPlaybackRate = min(max(maximumPlaybackRate, basePlaybackRate), 2)
         self.startupBufferDuration = max(0, startupBufferDuration)
+        self.maximumBufferedDuration = max(
+            self.startupBufferDuration,
+            max(0, maximumBufferedDuration)
+        )
         requestedPlaybackRate = normalizedPlaybackRate
     }
 
@@ -51,41 +66,78 @@ public actor HeptapodAVAudioPlaybackSink:
     public func play(
         _ speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
     ) async throws {
-        var completionTasks: [Task<Void, Never>] = []
+        let generation = playbackGeneration
         var bufferedDuration: TimeInterval = 0
         var didStartPlayback = false
+        var didScheduleAudio = false
         var streamSampleRate: Int?
 
-        for try await speech in speechStream {
-            guard speech.pcm16.isEmpty == false else { continue }
-            if let streamSampleRate, streamSampleRate != speech.sampleRate {
-                throw HeptapodAVAudioPlaybackError.inconsistentSampleRate(
-                    expected: streamSampleRate,
-                    actual: speech.sampleRate
+        do {
+            for try await speech in speechStream {
+                try Task.checkCancellation()
+                guard playbackGeneration == generation else {
+                    throw CancellationError()
+                }
+                guard speech.pcm16.isEmpty == false else { continue }
+                if let streamSampleRate, streamSampleRate != speech.sampleRate {
+                    throw HeptapodAVAudioPlaybackError.inconsistentSampleRate(
+                        expected: streamSampleRate,
+                        actual: speech.sampleRate
+                    )
+                }
+                streamSampleRate = speech.sampleRate
+
+                let scheduled = try schedule(speech)
+                didScheduleAudio = true
+                let scheduledBuffer = ScheduledBuffer(
+                    duration: scheduled.duration,
+                    completion: scheduled.completion
                 )
-            }
-            streamSampleRate = speech.sampleRate
+                scheduledBuffers.append(scheduledBuffer)
+                self.bufferedDuration += scheduled.duration
+                bufferedDuration += scheduled.duration
+                if didStartPlayback == false, bufferedDuration >= startupBufferDuration {
+                    player.play()
+                    didStartPlayback = true
+                } else if didStartPlayback, player.isPlaying == false {
+                    player.play()
+                }
 
-            let scheduled = try schedule(speech)
-            completionTasks.append(scheduled.completion)
-            bufferedDuration += scheduled.duration
-            if didStartPlayback == false, bufferedDuration >= startupBufferDuration {
-                player.play()
-                didStartPlayback = true
-            } else if didStartPlayback, player.isPlaying == false {
+                while self.bufferedDuration > maximumBufferedDuration {
+                    try await waitForOldestBuffer(generation: generation)
+                }
+            }
+
+            guard playbackGeneration == generation else {
+                throw CancellationError()
+            }
+            guard didScheduleAudio else {
+                throw HeptapodAVAudioPlaybackError.emptySpeech
+            }
+            if didStartPlayback == false {
                 player.play()
             }
+            while scheduledBuffers.isEmpty == false {
+                try await waitForOldestBuffer(generation: generation)
+            }
+        } catch {
+            if playbackGeneration == generation {
+                await cancelPlayback()
+            }
+            throw error
         }
+    }
 
-        guard completionTasks.isEmpty == false else {
-            throw HeptapodAVAudioPlaybackError.emptySpeech
+    public func cancelPlayback() async {
+        playbackGeneration &+= 1
+        player.stop()
+        for scheduledBuffer in scheduledBuffers {
+            scheduledBuffer.completion.cancel()
         }
-        if didStartPlayback == false {
-            player.play()
-        }
-        for completion in completionTasks {
-            await completion.value
-        }
+        scheduledBuffers.removeAll()
+        bufferedDuration = 0
+        requestedPlaybackRate = basePlaybackRate
+        timePitch.rate = requestedPlaybackRate
     }
 
     public func setPlaybackBacklog(segmentCount: Int) async {
@@ -138,12 +190,38 @@ public actor HeptapodAVAudioPlaybackSink:
             pair.continuation.finish()
         }
         let completion = Task {
-            for await _ in pair.stream {}
+            await withTaskCancellationHandler(operation: {
+                for await _ in pair.stream {}
+            }, onCancel: {
+                pair.continuation.finish()
+            })
         }
         return (
             duration: Double(samples.count) / Double(speech.sampleRate),
             completion: completion
         )
+    }
+
+    private func waitForOldestBuffer(generation: Int) async throws {
+        guard let oldest = scheduledBuffers.first else {
+            return
+        }
+
+        try await withTaskCancellationHandler(operation: {
+            await oldest.completion.value
+            try Task.checkCancellation()
+        }, onCancel: {
+            oldest.completion.cancel()
+        })
+
+        guard playbackGeneration == generation else {
+            throw CancellationError()
+        }
+        guard scheduledBuffers.isEmpty == false else {
+            return
+        }
+        scheduledBuffers.removeFirst()
+        bufferedDuration = max(0, bufferedDuration - oldest.duration)
     }
 
     private func prepareIfNeeded(format: AVAudioFormat) throws {

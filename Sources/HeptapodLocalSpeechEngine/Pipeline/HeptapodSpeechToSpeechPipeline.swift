@@ -133,7 +133,7 @@ public actor HeptapodSpeechToSpeechPipeline {
 
         let speech = try await synthesizer.synthesize(
             translated.translatedText,
-            languageCode: targetLanguageCode,
+            languageCode: translated.targetLanguageCode,
             voiceID: voiceID
         )
 
@@ -164,6 +164,9 @@ public actor HeptapodSpeechToSpeechPipeline {
         guard let transcript = try await recognizer.finish(languageHint: sourceLanguageCode) else {
             return nil
         }
+        guard transcript.isFinal else {
+            return nil
+        }
 
         let trimmedTranscript = transcript.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty else {
@@ -178,7 +181,7 @@ public actor HeptapodSpeechToSpeechPipeline {
 
         let speech = try await synthesizer.synthesize(
             translated.translatedText,
-            languageCode: targetLanguageCode,
+            languageCode: translated.targetLanguageCode,
             voiceID: voiceID
         )
 
@@ -220,37 +223,117 @@ public actor HeptapodSpeechToSpeechPipeline {
     func synthesizeLiveStream(
         _ translation: HeptapodTranslatedText,
         voiceID: String? = nil
-    ) async -> AsyncThrowingStream<HeptapodSynthesizedSpeech, Error> {
+    ) async -> HeptapodLiveSpeechStream {
         if synthesizer.descriptor.capabilities.contains(.streamingTTS) {
-            return await synthesizeStream(translation, voiceID: voiceID)
+            return .native(await synthesizeStream(translation, voiceID: voiceID))
         }
 
         let textChunks = HeptapodSpeechSynthesisTextChunker.chunks(
-            in: translation.translatedText
+            in: translation.translatedText,
+            maximumWordsPerChunk: 18
         )
-        let synthesizer = synthesizer
-        let languageCode = translation.targetLanguageCode
-        let pair = AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>.makeStream()
-        let task = Task {
-            do {
-                for textChunk in textChunks {
-                    try Task.checkCancellation()
-                    pair.continuation.yield(
-                        try await synthesizer.synthesize(
-                            textChunk,
-                            languageCode: languageCode,
-                            voiceID: voiceID
-                        )
-                    )
-                }
-                pair.continuation.finish()
-            } catch {
-                pair.continuation.finish(throwing: error)
+        return .fallback(DemandDrivenSpeechStream(
+            textChunks: textChunks,
+            synthesizer: synthesizer,
+            languageCode: translation.targetLanguageCode,
+            voiceID: voiceID
+        ))
+    }
+}
+
+enum HeptapodLiveSpeechStream: AsyncSequence, Sendable {
+    typealias Element = HeptapodSynthesizedSpeech
+
+    case native(AsyncThrowingStream<Element, Error>)
+    case fallback(DemandDrivenSpeechStream)
+
+    struct Iterator: AsyncIteratorProtocol {
+        fileprivate enum Source {
+            case native(AsyncThrowingStream<Element, Error>.Iterator)
+            case fallback(DemandDrivenSpeechStream.Iterator)
+        }
+
+        private var source: Source
+
+        mutating func next() async throws -> Element? {
+            switch source {
+            case .native(var iterator):
+                let value = try await iterator.next()
+                source = .native(iterator)
+                return value
+            case .fallback(var iterator):
+                let value = try await iterator.next()
+                source = .fallback(iterator)
+                return value
             }
         }
-        pair.continuation.onTermination = { _ in
-            task.cancel()
+
+        fileprivate init(_ source: Source) {
+            self.source = source
         }
-        return pair.stream
+    }
+
+    func makeAsyncIterator() -> Iterator {
+        switch self {
+        case .native(let stream):
+            Iterator(.native(stream.makeAsyncIterator()))
+        case .fallback(let stream):
+            Iterator(.fallback(stream.makeAsyncIterator()))
+        }
+    }
+}
+
+struct DemandDrivenSpeechStream: AsyncSequence, Sendable {
+    typealias Element = HeptapodSynthesizedSpeech
+
+    let textChunks: [String]
+    let synthesizer: any HeptapodSpeechSynthesizer
+    let languageCode: String
+    let voiceID: String?
+
+    struct Iterator: AsyncIteratorProtocol, Sendable {
+        private let textChunks: [String]
+        private let synthesizer: any HeptapodSpeechSynthesizer
+        private let languageCode: String
+        private let voiceID: String?
+        private var nextIndex = 0
+
+        init(
+            textChunks: [String],
+            synthesizer: any HeptapodSpeechSynthesizer,
+            languageCode: String,
+            voiceID: String?
+        ) {
+            self.textChunks = textChunks
+            self.synthesizer = synthesizer
+            self.languageCode = languageCode
+            self.voiceID = voiceID
+        }
+
+        mutating func next() async throws -> HeptapodSynthesizedSpeech? {
+            try Task.checkCancellation()
+            guard nextIndex < textChunks.count else {
+                return nil
+            }
+
+            let textChunk = textChunks[nextIndex]
+            let speech = try await synthesizer.synthesize(
+                textChunk,
+                languageCode: languageCode,
+                voiceID: voiceID
+            )
+            try Task.checkCancellation()
+            nextIndex += 1
+            return speech
+        }
+    }
+
+    func makeAsyncIterator() -> Iterator {
+        Iterator(
+            textChunks: textChunks,
+            synthesizer: synthesizer,
+            languageCode: languageCode,
+            voiceID: voiceID
+        )
     }
 }

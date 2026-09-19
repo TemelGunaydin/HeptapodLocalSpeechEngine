@@ -93,6 +93,16 @@ The live session owns:
 - keeping input/ASR work moving while previous translated audio is translating,
   synthesizing, or playing.
 
+The sentence-buffered session uses one serial MT/TTS worker with a FIFO of
+pending transcripts. `maximumPendingOutputs` limits synthesized segments in the
+playback queue; it does not suspend capture/ASR when that queue fills. Completed
+work is released instead of retaining a task chain for the whole session.
+
+This is not an end-to-end memory or latency bound. Pending text can still grow
+when sustained MT/TTS throughput is below the incoming speech rate, and PCM
+stream relays are not byte-bounded. A live overload policy remains separate work;
+the default preserves transcripts rather than silently dropping speech.
+
 The UI owns:
 
 - model selection,
