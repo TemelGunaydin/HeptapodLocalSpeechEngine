@@ -92,7 +92,7 @@ enum HeptapodSpeechSynthesisTextChunker {
                 }
             }
 
-            let chunkStart = words[startWordIndex].lowerBound
+            let chunkStart = startWordIndex == 0 ? range.lowerBound : words[startWordIndex].lowerBound
             let chunkEnd = endWordIndex < words.count
                 ? words[endWordIndex].lowerBound
                 : range.upperBound

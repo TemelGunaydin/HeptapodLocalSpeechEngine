@@ -100,6 +100,7 @@ public struct HeptapodSentenceEndpointingConfiguration: Sendable {
     public let flushOnStreamEnd: Bool
     public let flushOnTerminalPunctuation: Bool
     public let maximumBufferedSegments: Int
+    /// Bounds synthesized segments queued for playback, not the incoming transcript queue.
     public let maximumPendingOutputs: Int
     public let minimumWordsForPunctuationEndpoint: Int
     public let minimumSilenceEndpointDuration: TimeInterval
@@ -291,8 +292,7 @@ public actor HeptapodLiveSpeechSession {
                 voiceID: voiceID,
                 playbackQueue: playbackQueue,
                 continuation: continuation,
-                outputMode: outputMode,
-                maximumPendingOutputs: endpointing.maximumPendingOutputs
+                outputMode: outputMode
             )
             let task = Task {
                 do {
@@ -1610,6 +1610,11 @@ private func awaitLiveQueueTask(_ task: Task<Void, Error>) async throws {
 }
 
 private actor LiveSynthesisQueue {
+    private struct PendingOutput {
+        let index: Int
+        let transcript: HeptapodTranscriptSegment
+    }
+
     private let pipeline: HeptapodSpeechToSpeechPipeline
     private let sourceLanguageCode: String?
     private let targetLanguageCode: String
@@ -1617,8 +1622,8 @@ private actor LiveSynthesisQueue {
     private let playbackQueue: LivePlaybackQueue
     private let continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
     private let outputMode: HeptapodLiveOutputMode
-    private let maximumPendingOutputs: Int
-    private var tasks: [Task<Void, Error>] = []
+    private var pending: [PendingOutput] = []
+    private var worker: Task<Void, Error>?
     private var queuedOutputCount = 0
     private var isCancelled = false
     private var failure: Error?
@@ -1630,8 +1635,7 @@ private actor LiveSynthesisQueue {
         voiceID: String?,
         playbackQueue: LivePlaybackQueue,
         continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation,
-        outputMode: HeptapodLiveOutputMode,
-        maximumPendingOutputs: Int
+        outputMode: HeptapodLiveOutputMode
     ) {
         self.pipeline = pipeline
         self.sourceLanguageCode = sourceLanguageCode
@@ -1640,10 +1644,9 @@ private actor LiveSynthesisQueue {
         self.playbackQueue = playbackQueue
         self.continuation = continuation
         self.outputMode = outputMode
-        self.maximumPendingOutputs = max(1, maximumPendingOutputs)
     }
 
-    func enqueue(index: Int, transcript: HeptapodTranscriptSegment) async {
+    func enqueue(index: Int, transcript: HeptapodTranscriptSegment) {
         guard Task.isCancelled == false else {
             return
         }
@@ -1651,43 +1654,27 @@ private actor LiveSynthesisQueue {
             return
         }
 
-        while tasks.count >= maximumPendingOutputs {
-            guard let oldest = tasks.first else {
-                break
-            }
-            do {
-                try await awaitLiveQueueTask(oldest)
-            } catch {
-                recordFailure(error)
-            }
-            if tasks.isEmpty == false {
-                tasks.removeFirst()
-            }
-            guard Task.isCancelled == false else {
-                return
-            }
-            guard isCancelled == false, failure == nil else {
-                return
-            }
-        }
-
-        guard Task.isCancelled == false else {
-            return
-        }
-        guard isCancelled == false, failure == nil else {
-            return
-        }
         if outputMode == .speech {
             continuation.yield(.transcript(index: index, transcript))
         }
         queuedOutputCount += 1
         continuation.yield(.outputQueued(index: index, backlog: queuedOutputCount))
-        let previous = tasks.last
-        let task = Task { [self] in
-            do {
-                try await previous?.value
+        pending.append(PendingOutput(index: index, transcript: transcript))
+        // Keep capture/ASR independent of playback; only one worker owns MT/TTS.
+        if worker == nil {
+            worker = Task { try await processPending() }
+        }
+    }
+
+    private func processPending() async throws {
+        defer { worker = nil }
+        do {
+            while pending.isEmpty == false {
                 try Task.checkCancellation()
                 try checkHealthy()
+                let output = pending.removeFirst()
+                let index = output.index
+                let transcript = output.transcript
                 continuation.yield(.translationStarted(index: index))
                 let translation = try await pipeline.translateTranscript(
                     transcript,
@@ -1725,24 +1712,19 @@ private actor LiveSynthesisQueue {
                         HeptapodLiveTranslationResult(transcript: transcript, translation: translation)
                     ))
                 }
-                outputFinished()
-            } catch {
-                outputFinished()
-                recordFailure(error)
-                throw error
+                queuedOutputCount = max(0, queuedOutputCount - 1)
             }
+        } catch {
+            pending.removeAll()
+            queuedOutputCount = 0
+            recordFailure(error)
+            throw error
         }
-        tasks.append(task)
-    }
-
-    private func outputFinished() {
-        queuedOutputCount = max(0, queuedOutputCount - 1)
     }
 
     private func recordFailure(_ error: Error) {
         guard isCancelled == false,
-              failure == nil,
-              error is CancellationError == false else {
+              failure == nil else {
             return
         }
         failure = error
@@ -1759,21 +1741,10 @@ private actor LiveSynthesisQueue {
     }
 
     func drain() async throws {
-        while tasks.isEmpty == false {
-            let oldest = tasks[0]
-            do {
-                try await awaitLiveQueueTask(oldest)
-            } catch {
-                if let failure {
-                    throw failure
-                }
-                throw error
-            }
-            if tasks.isEmpty == false {
-                tasks.removeFirst()
-            }
-            try Task.checkCancellation()
+        if let worker {
+            try await awaitLiveQueueTask(worker)
         }
+        try Task.checkCancellation()
         try checkHealthy()
     }
 
@@ -1782,10 +1753,8 @@ private actor LiveSynthesisQueue {
             return
         }
         isCancelled = true
-        for task in tasks {
-            task.cancel()
-        }
-        tasks.removeAll()
+        worker?.cancel()
+        pending.removeAll()
         queuedOutputCount = 0
     }
 }

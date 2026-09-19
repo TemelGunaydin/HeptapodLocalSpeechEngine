@@ -885,6 +885,15 @@ func speechSynthesisChunkerSplitsLongSentencesAtClauses() {
     ])
 }
 
+@Test(arguments: ["\"", "(", "-"])
+func speechSynthesisChunkerPreservesLeadingPunctuation(prefix: String) {
+    let text = prefix + Array(repeating: "word", count: 40).joined(separator: " ") + "."
+    let chunks = HeptapodSpeechSynthesisTextChunker.chunks(in: text)
+
+    #expect(chunks.joined(separator: " ") == text)
+    #expect(chunks.allSatisfy { $0.split(separator: " ").count <= 18 })
+}
+
 @Test
 func liveSessionReportsFirstAudioWithoutPlaybackSink() async throws {
     let configuration = HeptapodPipelineConfiguration(
@@ -1628,6 +1637,148 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
     #expect(eventNames.firstIndex(of: "segment-3")! < eventNames.firstIndex(of: "result-2")!)
     #expect(eventNames.suffix(2) == ["result-2", "result-4"])
     #expect(outputBacklogs == [1, 2])
+}
+
+@Test(.timeLimit(.minutes(1)))
+func sentenceBufferedLiveSessionReadsBeyondPlaybackCapacity() async throws {
+    let synthesizer = GatedSynthesizer()
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: HeptapodPipelineConfiguration(
+            speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+            textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+            speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+            voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+        ),
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: synthesizer
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let texts = ["first", "second", "third", "fourth"]
+    let source = HeptapodArrayAudioChunkSource(audioChunks: texts.flatMap { text in
+        [
+            HeptapodAudioChunk(pcm16: Data(text.utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    })
+    let events = await session.runSentenceBuffered(
+        chunks: source.chunks(),
+        endpointing: HeptapodSentenceEndpointingConfiguration(maximumPendingOutputs: 1)
+    )
+    var didReadAllInput = false
+    var results: [String] = []
+    var maximumBacklog = 0
+
+    for try await event in events {
+        switch event {
+        case .segmentStarted(let index) where index == 8:
+            didReadAllInput = true
+            await synthesizer.release()
+        case .outputQueued(_, let backlog):
+            maximumBacklog = max(maximumBacklog, backlog)
+        case .result(_, let result):
+            #expect(didReadAllInput)
+            results.append(result.transcript.text)
+        default:
+            break
+        }
+    }
+
+    #expect(results == texts)
+    #expect(await synthesizer.synthesizedTexts() == texts)
+    #expect(maximumBacklog >= 3)
+}
+
+@Test(.timeLimit(.minutes(1)))
+func sentenceBufferedLiveSessionCancelsWorkerAndPendingText() async throws {
+    let synthesizer = GatedSynthesizer()
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: HeptapodPipelineConfiguration(
+            speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+            textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+            speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+            voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+        ),
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: synthesizer
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(audioChunks: ["first", "second", "third"].flatMap { text in
+        [
+            HeptapodAudioChunk(pcm16: Data(text.utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    })
+    let events = await session.runSentenceBuffered(chunks: source.chunks())
+    let queued = AsyncStream<Void>.makeStream()
+    let consumer = Task {
+        for try await event in events {
+            if case .outputQueued(_, let backlog) = event, backlog == 3 {
+                queued.continuation.finish()
+            }
+        }
+    }
+    defer { consumer.cancel() }
+    for await _ in queued.stream {}
+    await synthesizer.waitUntilStarted()
+
+    consumer.cancel()
+    _ = await consumer.result
+    await synthesizer.waitUntilCancelled()
+
+    #expect(await synthesizer.synthesizedTexts() == ["first"])
+}
+
+@Test(.timeLimit(.minutes(1)))
+func sentenceBufferedLiveSessionPropagatesWorkerFailure() async throws {
+    let synthesizer = GatedSynthesizer(failsAfterRelease: true)
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: HeptapodPipelineConfiguration(
+            speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+            textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+            speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+            voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+        ),
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: synthesizer
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(audioChunks: ["first", "second", "third"].flatMap { text in
+        [
+            HeptapodAudioChunk(pcm16: Data(text.utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    })
+    let events = await session.runSentenceBuffered(chunks: source.chunks())
+
+    await #expect(throws: GatedSynthesizer.Failure.self) {
+        for try await event in events {
+            if case .outputQueued(_, let backlog) = event, backlog == 3 {
+                await synthesizer.release()
+            }
+            if case .result = event {
+                Issue.record("A failed synthesis must not emit a result")
+            }
+        }
+    }
+    #expect(await synthesizer.synthesizedTexts() == ["first"])
 }
 
 @Test
@@ -2535,6 +2686,61 @@ private struct StubSynthesizer: HeptapodSpeechSynthesizer {
         voiceID: String?
     ) async throws -> HeptapodSynthesizedSpeech {
         HeptapodSynthesizedSpeech(pcm16: Data([9, 9]), sampleRate: 16_000, languageCode: languageCode)
+    }
+}
+
+private actor GatedSynthesizer: HeptapodSpeechSynthesizer {
+    enum Failure: Error {
+        case synthesis
+    }
+
+    nonisolated let descriptor = HeptapodModelDescriptor.kokoroTTS
+    private let gate = AsyncStream<Void>.makeStream()
+    private let started = AsyncStream<Void>.makeStream()
+    private let cancelled = AsyncStream<Void>.makeStream()
+    private let failsAfterRelease: Bool
+    private var texts: [String] = []
+
+    init(failsAfterRelease: Bool = false) {
+        self.failsAfterRelease = failsAfterRelease
+    }
+
+    func prepare() async throws {}
+
+    func synthesize(
+        _ text: String,
+        languageCode: String,
+        voiceID: String?
+    ) async throws -> HeptapodSynthesizedSpeech {
+        texts.append(text)
+        started.continuation.finish()
+        for await _ in gate.stream {}
+        do {
+            try Task.checkCancellation()
+        } catch {
+            cancelled.continuation.finish()
+            throw error
+        }
+        if failsAfterRelease {
+            throw Failure.synthesis
+        }
+        return HeptapodSynthesizedSpeech(pcm16: Data([9, 9]), sampleRate: 16_000, languageCode: languageCode)
+    }
+
+    func release() {
+        gate.continuation.finish()
+    }
+
+    func waitUntilStarted() async {
+        for await _ in started.stream {}
+    }
+
+    func waitUntilCancelled() async {
+        for await _ in cancelled.stream {}
+    }
+
+    func synthesizedTexts() -> [String] {
+        texts
     }
 }
 
