@@ -505,6 +505,15 @@ struct HeptapodLiveSpeechDemo {
             case .silenceSkipped(let index):
                 print("  VAD: silence, skipped")
                 try trace?.record(event: "silence_skipped", index: index)
+            case .partialTranscript(let index, let transcript):
+                let partialAt = Date()
+                let partialLatencySeconds = segmentStartTimes[index].map { partialAt.timeIntervalSince($0) }
+                try trace?.record(
+                    event: "partial_transcript",
+                    index: index,
+                    transcriptText: transcript.text,
+                    resultLatencySeconds: partialLatencySeconds
+                )
             case .transcript(let index, let transcript):
                 printTranscript(transcript)
                 transcriptTimes[index] = Date()

@@ -19,6 +19,27 @@ public protocol HeptapodSpeechRecognizer: HeptapodEngineComponent {
     func reset() async
 }
 
+/// An incremental recognition session bound to a single utterance.
+///
+/// Audio is fed with `pushAudio`, which returns updated cumulative
+/// hypotheses (`isFinal == false`) as the recognizer decodes more speech.
+/// The utterance ends with `finishUtterance`, which returns the final
+/// transcript, or with `abandonUtterance`, which discards decoder state.
+///
+/// Sessions are not internally synchronized; owners must serialize all
+/// calls and use one session per utterance.
+public protocol HeptapodStreamingRecognitionSession: AnyObject, Sendable {
+    func pushAudio(_ chunk: HeptapodAudioChunk) async throws -> [HeptapodTranscriptSegment]
+    func finishUtterance() async throws -> HeptapodTranscriptSegment?
+    func abandonUtterance() async
+}
+
+/// A recognizer that can expose incremental hypotheses instead of only
+/// whole-buffer transcripts.
+public protocol HeptapodStreamingSpeechRecognizer: HeptapodSpeechRecognizer {
+    func openStreamingSession(languageHint: String?) async throws -> any HeptapodStreamingRecognitionSession
+}
+
 public protocol HeptapodTextTranslator: HeptapodEngineComponent {
     func translate(
         _ text: String,

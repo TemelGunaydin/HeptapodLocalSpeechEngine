@@ -26,6 +26,7 @@ public enum HeptapodLiveSpeechEvent: Sendable {
     case segmentStarted(index: Int)
     case audioLevel(index: Int, HeptapodAudioLevel)
     case silenceSkipped(index: Int)
+    case partialTranscript(index: Int, HeptapodTranscriptSegment)
     case transcript(index: Int, HeptapodTranscriptSegment)
     case outputQueued(index: Int, backlog: Int)
     case translationStarted(index: Int)
@@ -299,6 +300,8 @@ public actor HeptapodLiveSpeechSession {
                     var index = 0
                     var pending = PendingSentence()
                     var asrStabilizer = SlidingASRStabilizer(configuration: endpointing.asrStabilization)
+                    let streamingRecognition = pipeline.streamingRecognitionAvailable
+                    var streamingSession: (any HeptapodStreamingRecognitionSession)?
 
                     for try await chunk in chunks {
                         index += 1
@@ -306,6 +309,93 @@ public actor HeptapodLiveSpeechSession {
                         try await playbackQueue.checkHealthy()
                         continuation.yield(.segmentStarted(index: index))
                         continuation.yield(.audioLevel(index: index, .measured(from: chunk)))
+
+                        if streamingRecognition {
+                            let activity = try await pipeline.speechSegments(in: chunk)
+                            let speechChunks = endpointedSpeechChunks(
+                                from: chunk,
+                                activity: activity,
+                                minimumSilenceDuration: endpointing.minimumSilenceEndpointDuration
+                            )
+                            guard speechChunks.isEmpty == false else {
+                                if let session = streamingSession {
+                                    streamingSession = nil
+                                    try await flushStreamingUtterance(
+                                        session: session,
+                                        asrStabilizer: &asrStabilizer,
+                                        pending: &pending,
+                                        at: index,
+                                        endpointing: endpointing,
+                                        outputMode: outputMode,
+                                        synthesisQueue: synthesisQueue,
+                                        sourceLanguageCode: sourceLanguageCode,
+                                        continuation: continuation
+                                    )
+                                } else {
+                                    continuation.yield(.silenceSkipped(index: index))
+                                }
+                                continue
+                            }
+
+                            for speechChunk in speechChunks {
+                                if speechChunk.startsAfterSilence, let session = streamingSession {
+                                    streamingSession = nil
+                                    try await flushStreamingUtterance(
+                                        session: session,
+                                        asrStabilizer: &asrStabilizer,
+                                        pending: &pending,
+                                        at: index,
+                                        endpointing: endpointing,
+                                        outputMode: outputMode,
+                                        synthesisQueue: synthesisQueue,
+                                        sourceLanguageCode: sourceLanguageCode,
+                                        continuation: continuation
+                                    )
+                                }
+
+                                if streamingSession == nil {
+                                    streamingSession = try await pipeline.openStreamingRecognitionSession(
+                                        sourceLanguageCode: sourceLanguageCode
+                                    )
+                                }
+                                guard let session = streamingSession else {
+                                    continue
+                                }
+
+                                let partials = try await session.pushAudio(speechChunk.chunk)
+                                for partial in partials {
+                                    continuation.yield(.partialTranscript(index: index, partial))
+                                    if let transcript = asrStabilizer.commitStablePrefix(from: partial) {
+                                        await consumeSentenceBufferedTranscript(
+                                            transcript,
+                                            at: index,
+                                            pending: &pending,
+                                            endpointing: endpointing,
+                                            outputMode: outputMode,
+                                            synthesisQueue: synthesisQueue,
+                                            sourceLanguageCode: sourceLanguageCode,
+                                            continuation: continuation
+                                        )
+                                    }
+                                }
+                            }
+
+                            if speechChunks.last?.endsBeforeSilence == true, let session = streamingSession {
+                                streamingSession = nil
+                                try await flushStreamingUtterance(
+                                    session: session,
+                                    asrStabilizer: &asrStabilizer,
+                                    pending: &pending,
+                                    at: index,
+                                    endpointing: endpointing,
+                                    outputMode: outputMode,
+                                    synthesisQueue: synthesisQueue,
+                                    sourceLanguageCode: sourceLanguageCode,
+                                    continuation: continuation
+                                )
+                            }
+                            continue
+                        }
 
                         if endpointing.asrStabilization.isEnabled {
                             let activity = try await pipeline.speechSegments(in: chunk)
@@ -410,6 +500,20 @@ public actor HeptapodLiveSpeechSession {
                         )
                     }
 
+                    if let session = streamingSession {
+                        streamingSession = nil
+                        let transcripts = try await finalizeStreamingUtterance(
+                            session: session,
+                            asrStabilizer: &asrStabilizer,
+                            sourceLanguageCode: sourceLanguageCode
+                        )
+                        for transcript in transcripts {
+                            if outputMode == .textOnly {
+                                continuation.yield(.transcript(index: index, transcript))
+                            }
+                            pending.append(transcript)
+                        }
+                    }
                     if let finalTranscript = asrStabilizer.flushLatest(fallbackLanguageCode: sourceLanguageCode) {
                         if outputMode == .textOnly {
                             continuation.yield(.transcript(index: index, finalTranscript))
@@ -602,6 +706,61 @@ private func flushStabilizedSpeechEndpoint(
         continuation.yield(.silenceSkipped(index: index))
     }
     asrStabilizer.reset()
+}
+
+private func flushStreamingUtterance(
+    session: any HeptapodStreamingRecognitionSession,
+    asrStabilizer: inout SlidingASRStabilizer,
+    pending: inout PendingSentence,
+    at index: Int,
+    endpointing: HeptapodSentenceEndpointingConfiguration,
+    outputMode: HeptapodLiveOutputMode,
+    synthesisQueue: LiveSynthesisQueue,
+    sourceLanguageCode: String?,
+    continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
+) async throws {
+    let transcripts = try await finalizeStreamingUtterance(
+        session: session,
+        asrStabilizer: &asrStabilizer,
+        sourceLanguageCode: sourceLanguageCode
+    )
+    for transcript in transcripts {
+        if outputMode == .textOnly {
+            continuation.yield(.transcript(index: index, transcript))
+        }
+        pending.append(transcript)
+    }
+
+    if endpointing.flushOnSilence, pending.hasText {
+        let didFlush = await flushPending(
+            &pending,
+            at: index,
+            synthesisQueue: synthesisQueue,
+            sourceLanguageCode: sourceLanguageCode
+        )
+        if didFlush == false {
+            continuation.yield(.silenceSkipped(index: index))
+        }
+    } else {
+        continuation.yield(.silenceSkipped(index: index))
+    }
+}
+
+private func finalizeStreamingUtterance(
+    session: any HeptapodStreamingRecognitionSession,
+    asrStabilizer: inout SlidingASRStabilizer,
+    sourceLanguageCode: String?
+) async throws -> [HeptapodTranscriptSegment] {
+    let finalTranscript = try await session.finishUtterance()
+    var transcripts: [HeptapodTranscriptSegment] = []
+    if let finalTranscript,
+       let transcript = asrStabilizer.commitStablePrefix(from: finalTranscript) {
+        transcripts.append(transcript)
+    }
+    if let transcript = asrStabilizer.flushLatest(fallbackLanguageCode: sourceLanguageCode) {
+        transcripts.append(transcript)
+    }
+    return transcripts
 }
 
 private struct PendingSentence {

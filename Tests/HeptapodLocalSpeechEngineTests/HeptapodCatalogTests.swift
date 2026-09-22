@@ -646,6 +646,8 @@ func liveSessionEmitsEventsSkipsSilenceAndPlaysResults() async throws {
             translations.append(result.translation.translatedText)
         case .transcript:
             break
+        case .partialTranscript:
+            break
         case .translation:
             break
         case .outputQueued, .translationStarted, .translationCompleted, .synthesisStarted, .playbackQueued:
@@ -726,7 +728,7 @@ func liveSessionQueuesPlaybackWithoutBlockingNextResult() async throws {
             break
         case .playbackCompleted(let index):
             eventNames.append("playback-\(index)")
-        case .silenceSkipped:
+        case .silenceSkipped, .partialTranscript:
             break
         }
     }
@@ -981,7 +983,7 @@ func liveSessionTextOnlyTranslatesWithoutSynthesisOrPlayback() async throws {
             eventNames.append("translation")
         case .playbackCompleted(let index):
             playbackIndexes.append(index)
-        case .segmentStarted, .audioLevel, .silenceSkipped, .outputQueued, .translationStarted,
+        case .segmentStarted, .audioLevel, .silenceSkipped, .partialTranscript, .outputQueued, .translationStarted,
              .translationCompleted, .synthesisStarted, .result, .synthesisAudioReady,
              .playbackQueued, .playbackStarted:
             break
@@ -1037,7 +1039,7 @@ func textOnlyBufferedTranslationNormalizesFragmentedTranscript() async throws {
             transcripts.append(transcript.text)
         case .translation(_, let result):
             translations.append(result.translation.translatedText)
-        case .segmentStarted, .audioLevel, .silenceSkipped, .outputQueued, .translationStarted,
+        case .segmentStarted, .audioLevel, .silenceSkipped, .partialTranscript, .outputQueued, .translationStarted,
              .translationCompleted, .synthesisStarted, .result, .synthesisAudioReady,
              .playbackQueued, .playbackStarted, .playbackCompleted:
             break
@@ -1629,7 +1631,7 @@ func sentenceBufferedLiveSessionQueuesSynthesisWithoutBlockingInput() async thro
             outputBacklogs.append(backlog)
         case .translationStarted, .translationCompleted, .synthesisStarted, .playbackQueued:
             break
-        case .silenceSkipped, .synthesisAudioReady, .playbackStarted, .playbackCompleted:
+        case .silenceSkipped, .partialTranscript, .synthesisAudioReady, .playbackStarted, .playbackCompleted:
             break
         }
     }
@@ -2275,6 +2277,362 @@ func sentenceBufferedLiveSessionSplitsASRWindowAtIntraChunkSilence() async throw
 }
 
 @Test
+func pipelineExposesStreamingRecognitionSupport() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let batchPipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: StubRecognizer(),
+        translator: StubTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    #expect(batchPipeline.streamingRecognitionAvailable == false)
+    #expect(try await batchPipeline.openStreamingRecognitionSession(sourceLanguageCode: "en") == nil)
+
+    let session = ScriptedStreamingRecognitionSession(
+        partialBatches: [["Hello there"]],
+        finalText: "Hello there"
+    )
+    let recognizer = ScriptedStreamingRecognizer(sessions: [session])
+    let streamingPipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: recognizer,
+        translator: StubTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    #expect(streamingPipeline.streamingRecognitionAvailable == true)
+
+    let openedSession = try await streamingPipeline.openStreamingRecognitionSession(sourceLanguageCode: "en")
+    #expect(openedSession != nil)
+    #expect(await recognizer.openedSessionCount == 1)
+    #expect(await recognizer.lastLanguageHint == "en")
+}
+
+@Test
+func streamingSessionEmitsPartialsAndStablePrefixResults() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let session = ScriptedStreamingRecognitionSession(
+        partialBatches: [
+            ["One of the"],
+            ["One of the goals of the system"],
+            ["One of the goals of the system is speed."]
+        ],
+        finalText: "One of the goals of the system is speed."
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: ScriptedStreamingRecognizer(sessions: [session]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let playbackSink = RecordingPlaybackSink()
+    let liveSession = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        playbackSink: playbackSink
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("a".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("b".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("c".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await liveSession.runSentenceBuffered(chunks: source.chunks())
+    var partialTexts: [String] = []
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        switch event {
+        case .partialTranscript(_, let transcript):
+            partialTexts.append(transcript.text)
+            #expect(transcript.isFinal == false)
+        case .result(_, let result):
+            resultTexts.append(result.transcript.text)
+        default:
+            break
+        }
+    }
+
+    #expect(partialTexts == [
+        "One of the",
+        "One of the goals of the system",
+        "One of the goals of the system is speed."
+    ])
+    #expect(resultTexts == ["One of the goals of the system is speed."])
+    #expect(await playbackSink.playedCount() == 1)
+    #expect(session.finishCount == 1)
+}
+
+@Test
+func streamingSessionCommitsTailFromFinalTranscript() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let session = ScriptedStreamingRecognitionSession(
+        partialBatches: [
+            ["Hello world"]
+        ],
+        finalText: "Hello world again"
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: ScriptedStreamingRecognizer(sessions: [session]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let liveSession = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("a".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await liveSession.runSentenceBuffered(chunks: source.chunks())
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == ["Hello world again"])
+}
+
+@Test
+func streamingSessionUsesOneSessionPerUtterance() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let firstSession = ScriptedStreamingRecognitionSession(
+        partialBatches: [["Good morning everyone"]],
+        finalText: "Good morning everyone"
+    )
+    let secondSession = ScriptedStreamingRecognitionSession(
+        partialBatches: [["Second utterance here"]],
+        finalText: "Second utterance here"
+    )
+    let recognizer = ScriptedStreamingRecognizer(sessions: [firstSession, secondSession])
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: recognizer,
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let liveSession = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("a".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("b".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await liveSession.runSentenceBuffered(chunks: source.chunks())
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == ["Good morning everyone", "Second utterance here"])
+    #expect(await recognizer.openedSessionCount == 2)
+    #expect(firstSession.finishCount == 1)
+    #expect(secondSession.finishCount == 1)
+}
+
+@Test
+func streamingSessionHandlesCorrectedPartialsWithoutDuplication() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let session = ScriptedStreamingRecognitionSession(
+        partialBatches: [
+            ["the weather is"],
+            ["the weather is very nice today"],
+            ["the weather is really nice today"]
+        ],
+        finalText: "the weather is really nice today"
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: ScriptedStreamingRecognizer(sessions: [session]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let liveSession = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("a".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("b".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("c".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await liveSession.runSentenceBuffered(chunks: source.chunks())
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == ["the weather is really nice today"])
+}
+
+@Test
+func streamingSessionFinalizesActiveUtteranceAtStreamEnd() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let session = ScriptedStreamingRecognitionSession(
+        partialBatches: [
+            ["Finishing at"],
+            ["Finishing at stream end"]
+        ],
+        finalText: "Finishing at stream end"
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: ScriptedStreamingRecognizer(sessions: [session]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let liveSession = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("a".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("b".utf8), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await liveSession.runSentenceBuffered(chunks: source.chunks())
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == ["Finishing at stream end"])
+    #expect(session.finishCount == 1)
+}
+
+@Test
+func streamingSessionEmitsPartialsAndTranscriptsInTextOnlyMode() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let session = ScriptedStreamingRecognitionSession(
+        partialBatches: [
+            ["This is"],
+            ["This is a live caption."]
+        ],
+        finalText: "This is a live caption."
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: ScriptedStreamingRecognizer(sessions: [session]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let liveSession = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        outputMode: .textOnly
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("a".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("b".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await liveSession.runSentenceBuffered(chunks: source.chunks())
+    var partialTexts: [String] = []
+    var transcriptTexts: [String] = []
+    var translationTexts: [String] = []
+
+    for try await event in events {
+        switch event {
+        case .partialTranscript(_, let transcript):
+            partialTexts.append(transcript.text)
+        case .transcript(_, let transcript):
+            transcriptTexts.append(transcript.text)
+        case .translation(_, let result):
+            translationTexts.append(result.translation.translatedText)
+        default:
+            break
+        }
+    }
+
+    #expect(partialTexts == ["This is", "This is a live caption."])
+    #expect(transcriptTexts == ["This is", "a live caption."])
+    #expect(translationTexts == ["This is a live caption."])
+}
+
+@Test
 func wavFilePlaybackSinkWritesSequentialFiles() async throws {
     let outputDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("heptapod-wav-sink-\(UUID().uuidString)")
@@ -2374,6 +2732,75 @@ private actor SequenceRecognizer: HeptapodSpeechRecognizer {
 
     func reset() async {
         texts.removeAll()
+    }
+}
+
+private final class ScriptedStreamingRecognitionSession: HeptapodStreamingRecognitionSession, @unchecked Sendable {
+    let partialBatches: [[String]]
+    let finalText: String?
+    private var pushIndex = 0
+    private(set) var pushCount = 0
+    private(set) var finishCount = 0
+
+    init(partialBatches: [[String]], finalText: String?) {
+        self.partialBatches = partialBatches
+        self.finalText = finalText
+    }
+
+    func pushAudio(_ chunk: HeptapodAudioChunk) async throws -> [HeptapodTranscriptSegment] {
+        guard pushIndex < partialBatches.count else {
+            return []
+        }
+        let texts = partialBatches[pushIndex]
+        pushIndex += 1
+        pushCount += 1
+        return texts.map {
+            HeptapodTranscriptSegment(text: $0, languageCode: "en", isFinal: false)
+        }
+    }
+
+    func finishUtterance() async throws -> HeptapodTranscriptSegment? {
+        finishCount += 1
+        guard let finalText else {
+            return nil
+        }
+        return HeptapodTranscriptSegment(text: finalText, languageCode: "en", isFinal: true)
+    }
+
+    func abandonUtterance() async {}
+}
+
+private actor ScriptedStreamingRecognizer: HeptapodStreamingSpeechRecognizer {
+    nonisolated let descriptor = HeptapodModelDescriptor.qwenASRCompact
+    private var pendingSessions: [ScriptedStreamingRecognitionSession]
+    private(set) var openedSessions: [ScriptedStreamingRecognitionSession] = []
+    private(set) var openedSessionCount = 0
+    private(set) var lastLanguageHint: String?
+
+    init(sessions: [ScriptedStreamingRecognitionSession]) {
+        self.pendingSessions = sessions
+    }
+
+    func prepare() async throws {}
+
+    func transcribe(_ chunk: HeptapodAudioChunk, languageHint: String?) async throws -> HeptapodTranscriptSegment? {
+        nil
+    }
+
+    func finish(languageHint: String?) async throws -> HeptapodTranscriptSegment? {
+        nil
+    }
+
+    func reset() async {}
+
+    func openStreamingSession(languageHint: String?) async throws -> any HeptapodStreamingRecognitionSession {
+        openedSessionCount += 1
+        lastLanguageHint = languageHint
+        let session = pendingSessions.isEmpty
+            ? ScriptedStreamingRecognitionSession(partialBatches: [], finalText: nil)
+            : pendingSessions.removeFirst()
+        openedSessions.append(session)
+        return session
     }
 }
 

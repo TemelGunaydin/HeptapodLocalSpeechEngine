@@ -113,6 +113,19 @@ public actor HeptapodSpeechToSpeechPipeline {
         return transcript
     }
 
+    nonisolated public var streamingRecognitionAvailable: Bool {
+        recognizer is any HeptapodStreamingSpeechRecognizer
+    }
+
+    public func openStreamingRecognitionSession(
+        sourceLanguageCode: String?
+    ) async throws -> (any HeptapodStreamingRecognitionSession)? {
+        guard let streamingRecognizer = recognizer as? any HeptapodStreamingSpeechRecognizer else {
+            return nil
+        }
+        return try await streamingRecognizer.openStreamingSession(languageHint: sourceLanguageCode)
+    }
+
     public func translateAndSynthesize(
         _ transcript: HeptapodTranscriptSegment,
         sourceLanguageCode: String?,
