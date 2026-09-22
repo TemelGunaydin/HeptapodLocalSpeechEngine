@@ -208,16 +208,16 @@ public extension HeptapodModelDescriptor {
     )
 
     static let nemotronStreamingASR = HeptapodModelDescriptor(
-        id: "asr.nemotron3_5.streaming.0_6b.mlx_audio",
+        id: "asr.nemotron3_5.streaming.0_6b.coreml.int8",
         stage: .speechRecognition,
         displayName: "Nemotron 3.5 ASR Streaming 0.6B",
-        provider: "NVIDIA / MLX Community",
+        provider: "NVIDIA / Soniqo",
         family: "Nemotron ASR / FastConformer-RNNT",
-        backend: .custom,
+        backend: .coreML,
         capabilities: [.streamingASR, .batchASR],
         qualityTier: .highQuality,
         latencyTier: .realtime,
-        status: .planned,
+        status: .ready,
         footprint: HeptapodModelFootprint(
             downloadSize: .gigabytes(1.3),
             installedSize: .gigabytes(1.5),
@@ -225,10 +225,10 @@ public extension HeptapodModelDescriptor {
         ),
         languageCoverage: HeptapodLanguageCoverage(
             sourceLanguageCodes: ["en-US", "en-GB", "tr-TR", "es-ES", "fr-FR", "de-DE"],
-            notes: "MLX conversion covers 40 language-locales with language-ID prompting; English and Turkish are transcription-ready in the upstream model."
+            notes: "Multilingual CoreML bundle covers 76 language-locales with language-ID prompting and emits native punctuation and capitalization."
         ),
-        summary: "Best current ASR candidate for replacing chunked Qwen with cache-aware streaming on Apple Silicon.",
-        tradeoffs: "Requires an mlx-audio Python bridge today; Nemotron support is on mlx-audio main and not yet in a PyPI release. Direct Swift adapter still needs separate work.",
+        summary: "Cache-aware streaming ASR that feeds incremental hypotheses into the live translation pipeline.",
+        tradeoffs: "INT8-palettized CoreML weights target the Neural Engine; larger install than the compact Qwen batch model.",
         licenseNote: "NVIDIA Open Model License; verify redistribution and deployment restrictions before product use."
     )
 

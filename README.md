@@ -88,6 +88,7 @@ HeptapodLocalSpeechEngine/
       HeptapodAVAudioPlaybackSink.swift
       HeptapodSileroVADAdapter.swift
       HeptapodQwen3ASRAdapter.swift
+      HeptapodNemotronStreamingASRAdapter.swift
       HeptapodMADLADTranslatorAdapter.swift
       HeptapodAppleTranslationAdapter.swift
       HeptapodTranslateGemmaTranslatorAdapter.swift
@@ -287,6 +288,28 @@ ranges, so a pause of at least 350 ms can close the ASR window even when it fall
 inside a larger capture chunk. Text-only mode keeps stabilization off by default
 for easier ASR observability; use `--asr-stabilization` to force it on or
 `--no-asr-stabilization` to disable it explicitly.
+
+For true streaming recognition, select the Nemotron CoreML backend with
+`--asr nemotron`. This swaps the sliding-window emulation for a cache-aware
+streaming recognizer: audio is fed into a per-utterance recognition session,
+incremental hypotheses arrive as partial transcripts (traced as
+`partial_transcript` events), the same stable-prefix policy commits word deltas,
+and the utterance is finalized at silence endpoints. Nemotron emits native
+punctuation and capitalization, so the terminal-punctuation endpoint works
+without waiting for a VAD pause:
+
+```bash
+Tools/run_live_translation.sh \
+  --from en \
+  --to tr \
+  --mt apple \
+  --asr nemotron
+```
+
+In the file-backed EN smoke test on Apple Silicon, partial transcripts arrived
+about 0.1 seconds after each capture chunk and the first sentence translated in
+roughly one second after its endpoint. Model weights (~1.5 GB CoreML INT8)
+download once from Hugging Face and are warmed up during pipeline preparation.
 
 Latency tuning:
 
@@ -529,7 +552,7 @@ All file sizes are estimates until each adapter owns a concrete model artifact a
 | ASR | WhisperKit Base | CoreML/WhisperKit | Planned | ~220 MB | Streaming ASR, timestamps | Separate model management |
 | ASR | WhisperKit Large v3 | CoreML/WhisperKit | Planned | ~3.4 GB | Maximum ASR quality | Heavy |
 | ASR | Parakeet Streaming | CoreML | Planned | ~340 MB | True partial ASR | Language coverage depends on variant |
-| ASR | Nemotron 3.5 ASR Streaming 0.6B | MLX/Python | Planned | ~1.5 GB | True cache-aware streaming ASR | Needs mlx-audio bridge; not Swift-native yet |
+| ASR | Nemotron 3.5 ASR Streaming 0.6B | CoreML (speech-swift) | Adapter target ready | ~1.5 GB | True cache-aware streaming ASR with native punctuation | Larger install than compact Qwen |
 | MT | MADLAD-400 3B | MLX Swift | Adapter target ready | ~2.8 GB | First local translation | Quality varies by language pair |
 | MT | Apple Translation | System framework | Adapter target ready | System-managed | Fast, natural on-device translation | macOS 26+ and installed language pair |
 | MT | TranslateGemma 4B 4-bit | MLX/Python | Experimental adapter ready | ~2.4 GB | Local translation experiments | EN-to-TR quality trails Apple in the fixed fixture |
@@ -559,6 +582,13 @@ EN-to-TR quality mode on macOS 26+:
 ```text
 Silero VAD + Qwen3 ASR 0.6B + Apple Translation + Chatterbox MLX
 Translation assets are managed by macOS.
+```
+
+Realtime live mode on macOS 26+:
+
+```text
+Silero VAD + Nemotron streaming ASR + Apple Translation + MOSS-TTS-Nano
+Streaming hypotheses feed stable-prefix deltas into sentence endpointing.
 ```
 
 Research direct S2ST mode:
@@ -668,8 +698,13 @@ Useful advanced metrics:
    - Compare against Qwen3 ASR for latency and quality.
 
 8. `NemotronASRAdapter`
-   - Prototype an `mlx-audio` Python bridge for `mlx-community/nemotron-3.5-asr-streaming-0.6b`.
-   - Compare bf16 and 8-bit MLX weights against Qwen compact/quality on the same WAV fixtures.
+   - Status: ready in `HeptapodSpeechSwiftAdapters` as `HeptapodNemotronStreamingASRAdapter`.
+   - Wraps the Swift-native CoreML streaming recognizer from `speech-swift`
+     (`aufklarer/Nemotron-3.5-ASR-Streaming-0.6B-CoreML-INT8`); no Python bridge.
+   - Implements `HeptapodStreamingSpeechRecognizer`, so the live session consumes
+     incremental hypotheses instead of re-running batch ASR windows.
+   - Remaining work: compare EN quality and latency against Qwen compact/quality
+     on the same WAV fixtures and record the benchmark under `Experiments/Results/`.
 
 9. `NLLBTranslatorAdapter`
    - Add a translation quality alternative.
@@ -681,17 +716,15 @@ Useful advanced metrics:
 
 ## Engineering Notes
 
-The current implementation is segment-based: speech is processed in short chunks,
-then translated and synthesized. This is more stable than emitting unstable
-word-by-word translations.
+The current implementation is segment-based by default: speech is processed in short chunks,
+then translated and synthesized. Streaming ASR with `--asr nemotron` already
+emits incremental partial transcripts and stable-prefix word deltas. The
+remaining steps toward a full OpenAI-Realtime-style experience are:
 
-True realtime local speech translation needs:
-
-- streaming ASR,
-- incremental text translation,
-- streaming TTS,
-- audio queue scheduling,
-- rollback/rewrite logic for partial transcripts.
+- incremental text translation of a growing hypothesis prefix,
+- revision events that supersede an already-emitted translation,
+- cancellation/trimming of already-scheduled playback audio,
+- streaming TTS fed from stable prefixes before sentence flush.
 
 These can be added incrementally while preserving the existing pipeline contracts.
 
@@ -711,12 +744,13 @@ This package currently contains:
 - Pipeline configuration validation.
 - Pipeline readiness reporting for UI/integration checks.
 - Protocols for VAD, ASR, text translation, TTS, and direct S2ST.
+- Streaming recognition protocols (`HeptapodStreamingSpeechRecognizer`) that expose incremental per-utterance hypotheses and `partialTranscript` live events.
 - A speech-to-speech pipeline actor.
 - A live speech session that schedules audio chunks, emits segment events, skips silence, and optionally plays synthesized audio through a sink.
 - Detailed pipeline results that expose transcript, translated text, and synthesized speech.
 - Unavailable placeholder adapters for not-yet-integrated models.
 - A placeholder adapter factory that can build the selected pipeline shape before real inference adapters exist.
-- `HeptapodSpeechSwiftAdapters`, which provides runnable Silero VAD, Qwen3-ASR, MADLAD-400, Apple Translation, MOSS-TTS-Nano streaming, Chatterbox MLX/PyTorch, macOS System Voice, Kokoro, AVAudio microphone/playback, and ScreenCaptureKit system-audio adapters.
+- `HeptapodSpeechSwiftAdapters`, which provides runnable Silero VAD, Qwen3-ASR, Nemotron streaming ASR, MADLAD-400, Apple Translation, MOSS-TTS-Nano streaming, Chatterbox MLX/PyTorch, macOS System Voice, Kokoro, AVAudio microphone/playback, and ScreenCaptureKit system-audio adapters.
 - A real file-based speech-to-speech smoke test executable and recorded experiment result.
 
 It runs file-based local inference through the speech-swift adapter target and

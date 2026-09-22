@@ -45,6 +45,7 @@ let package = Package(
                 .product(name: "MADLADTranslation", package: "speech-swift"),
                 .product(name: "KokoroTTS", package: "speech-swift"),
                 .product(name: "SpeechVAD", package: "speech-swift"),
+                .product(name: "NemotronStreamingASR", package: "speech-swift"),
                 .product(name: "AudioCommon", package: "speech-swift")
             ]
         ),

@@ -191,7 +191,7 @@ struct HeptapodLiveSpeechDemo {
           --duration <sec>    Stop live/file audio after this many seconds.
           --from <code>       Source language. Default: en.
           --to <code>         Target language. Default: tr.
-          --asr <name>        Real mode ASR backend: compact or quality. Default: compact.
+          --asr <name>        Real mode ASR backend: compact, quality, or nemotron. Default: compact.
           --mt <name>         Real mode translation: madlad, apple, or translategemma. Default: madlad.
                               Apple uses installed system language assets on macOS 26+.
           --mt-postedit <name>
@@ -1051,6 +1051,7 @@ private enum DemoTTSBackend: String {
 private enum DemoASRPreset: String {
     case compact
     case quality
+    case nemotron
 
     var descriptor: HeptapodModelDescriptor {
         switch self {
@@ -1058,6 +1059,8 @@ private enum DemoASRPreset: String {
             HeptapodModelDescriptor.qwenASRCompact
         case .quality:
             HeptapodModelDescriptor.qwenASRHighQuality
+        case .nemotron:
+            HeptapodModelDescriptor.nemotronStreamingASR
         }
     }
 
@@ -1067,6 +1070,8 @@ private enum DemoASRPreset: String {
             HeptapodQwen3ASRAdapter.compactModelID
         case .quality:
             HeptapodQwen3ASRAdapter.highQualityModelID
+        case .nemotron:
+            HeptapodNemotronStreamingASRAdapter.defaultModelID
         }
     }
 }
@@ -1374,7 +1379,7 @@ private enum DemoError: LocalizedError {
         case .inconsistentStreamingSampleRate(let expected, let actual):
             "Synthesized speech stream changed sample rate from \(expected) Hz to \(actual) Hz."
         case .invalidASRPreset(let value):
-            "Invalid ASR preset: \(value). Use compact or quality."
+            "Invalid ASR preset: \(value). Use compact, quality, or nemotron."
         case .invalidDuration(let value):
             "Invalid duration: \(value)."
         case .invalidLatencyPreset(let value):

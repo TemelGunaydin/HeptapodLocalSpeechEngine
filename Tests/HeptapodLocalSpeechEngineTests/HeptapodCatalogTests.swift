@@ -75,13 +75,16 @@ func seamlessStreamingResearchPipelineIsCataloguedButNotRunnable() throws {
 }
 
 @Test
-func nemotronStreamingASRIsCataloguedAsPlannedAdapterCandidate() {
+func nemotronStreamingASRIsCataloguedAsReadyStreamingAdapter() {
     let catalog = HeptapodModelCatalog()
     let speechRecognitionModels = catalog.models(for: .speechRecognition)
 
     #expect(speechRecognitionModels.map(\.id).contains(HeptapodModelDescriptor.nemotronStreamingASR.id))
-    #expect(HeptapodModelDescriptor.nemotronStreamingASR.status == .planned)
+    #expect(HeptapodModelDescriptor.nemotronStreamingASR.status == .ready)
     #expect(HeptapodModelDescriptor.nemotronStreamingASR.capabilities.contains(.streamingASR))
+    #expect(HeptapodModelDescriptor.nemotronStreamingASR.capabilities.contains(.batchASR))
+    #expect(HeptapodModelDescriptor.nemotronStreamingASR.latencyTier == .realtime)
+    #expect(HeptapodModelDescriptor.nemotronStreamingASR.backend == .coreML)
 
     let configuration = HeptapodPipelineConfiguration(
         speechRecognitionModelID: HeptapodModelDescriptor.nemotronStreamingASR.id,
@@ -91,8 +94,18 @@ func nemotronStreamingASRIsCataloguedAsPlannedAdapterCandidate() {
     )
     let readiness = HeptapodSpeechSwiftAdapterFactory.readiness(for: configuration)
 
-    #expect(readiness.canRunInference == false)
-    #expect(readiness.unavailableDescriptors.map(\.id).contains(HeptapodModelDescriptor.nemotronStreamingASR.id))
+    #expect(readiness.canRunInference == true)
+    #expect(readiness.unavailableDescriptors.map(\.id).contains(HeptapodModelDescriptor.nemotronStreamingASR.id) == false)
+}
+
+@Test
+func nemotronAdapterSanitizesLanguageTagsFromTranscripts() {
+    #expect(HeptapodNemotronStreamingASRAdapter.sanitizedTranscriptText("Good morning everyone. <en-US> One of the goals") == "Good morning everyone. One of the goals")
+    #expect(HeptapodNemotronStreamingASRAdapter.sanitizedTranscriptText("<tr-TR> Merhaba dünya") == "Merhaba dünya")
+    #expect(HeptapodNemotronStreamingASRAdapter.sanitizedTranscriptText("no tags here") == "no tags here")
+    #expect(HeptapodNemotronStreamingASRAdapter.sanitizedTranscriptText("<en-US>") == "")
+    #expect(HeptapodNemotronStreamingASRAdapter.sanitizedTranscriptText("word   spacing") == "word spacing")
+    #expect(HeptapodNemotronStreamingASRAdapter.sanitizedTranscriptText("<auto> <en-GB> hello") == "hello")
 }
 
 @Test

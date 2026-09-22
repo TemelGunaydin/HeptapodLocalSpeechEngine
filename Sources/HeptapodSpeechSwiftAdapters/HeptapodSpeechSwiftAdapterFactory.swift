@@ -7,6 +7,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
             HeptapodModelDescriptor.sileroVAD.id,
             HeptapodModelDescriptor.qwenASRCompact.id,
             HeptapodModelDescriptor.qwenASRHighQuality.id,
+            HeptapodModelDescriptor.nemotronStreamingASR.id,
             HeptapodModelDescriptor.madladTranslator.id,
             HeptapodModelDescriptor.translateGemma4B.id,
             HeptapodModelDescriptor.mossTTSNano.id,
@@ -35,6 +36,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         configuration: HeptapodPipelineConfiguration = starterFilePipelineConfiguration,
         catalog: HeptapodModelCatalog = HeptapodModelCatalog(),
         asrModelID: String = HeptapodQwen3ASRAdapter.defaultModelID,
+        nemotronASRModelID: String = HeptapodNemotronStreamingASRAdapter.defaultModelID,
         translationModelID: String = HeptapodMADLADTranslatorAdapter.defaultModelID,
         translateGemmaModelID: String = HeptapodTranslateGemmaTranslatorAdapter.defaultModelID,
         translateGemmaPythonExecutable: String = ".venv-translategemma/bin/python",
@@ -82,9 +84,11 @@ public enum HeptapodSpeechSwiftAdapterFactory {
             configuration: configuration,
             catalog: catalog,
             vad: vad,
-            recognizer: HeptapodQwen3ASRAdapter(
+            recognizer: makeRecognizer(
+                for: configuration.speechRecognitionModelID,
                 descriptor: recognizerDescriptor,
-                modelID: asrModelID,
+                qwenModelID: asrModelID,
+                nemotronModelID: nemotronASRModelID,
                 offlineMode: offlineMode
             ),
             translator: makePostEditingTranslator(
@@ -138,6 +142,28 @@ public enum HeptapodSpeechSwiftAdapterFactory {
     ) throws {
         guard implementedModelIDs.contains(id) else {
             throw HeptapodEngineError.adapterNotImplemented(id)
+        }
+    }
+
+    private static func makeRecognizer(
+        for modelID: String,
+        descriptor: HeptapodModelDescriptor,
+        qwenModelID: String,
+        nemotronModelID: String,
+        offlineMode: Bool
+    ) -> any HeptapodSpeechRecognizer {
+        switch modelID {
+        case HeptapodModelDescriptor.nemotronStreamingASR.id:
+            HeptapodNemotronStreamingASRAdapter(
+                descriptor: descriptor,
+                modelID: nemotronModelID
+            )
+        default:
+            HeptapodQwen3ASRAdapter(
+                descriptor: descriptor,
+                modelID: qwenModelID,
+                offlineMode: offlineMode
+            )
         }
     }
 

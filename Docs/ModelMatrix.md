@@ -1,15 +1,11 @@
 # Model Matrix
 
 All numbers are estimates until each adapter pins a model artifact and cache layout.
-Silero VAD, Qwen3-ASR, MADLAD, Apple Translation, experimental TranslateGemma,
-MOSS-TTS-Nano, Chatterbox MLX, native macOS voices, Kokoro, and the older
-PyTorch Chatterbox bridge are runnable today.
-MOSS is the streaming Turkish default; Chatterbox MLX is the quality mode.
-
-Nemotron 3.5 ASR Streaming is tracked through the MLX community conversion,
-not the original NeMo-only path. It currently needs `mlx-audio` with Nemotron
-support; use it as an Apple Silicon benchmark candidate before promoting it to a
-Swift-native adapter.
+Silero VAD, Qwen3-ASR, Nemotron streaming ASR, MADLAD, Apple Translation,
+experimental TranslateGemma, MOSS-TTS-Nano, Chatterbox MLX, native macOS voices,
+Kokoro, and the older PyTorch Chatterbox bridge are runnable today.
+MOSS is the streaming Turkish default; Chatterbox MLX is the quality mode;
+Nemotron is the streaming ASR backend for realtime live translation.
 
 | Stage | Model | Status | Estimated Install | Notes |
 | --- | --- | --- | ---: | --- |
@@ -19,7 +15,7 @@ Swift-native adapter.
 | ASR | WhisperKit Base | Planned | ~220 MB | Streaming/timestamps candidate |
 | ASR | WhisperKit Large v3 | Planned | ~3.4 GB | Heavy high-quality ASR |
 | ASR | Parakeet Streaming | Planned | ~340 MB | True partial ASR candidate |
-| ASR | Nemotron 3.5 ASR Streaming 0.6B | Planned | ~1.5 GB | MLX/Python cache-aware streaming candidate |
+| ASR | Nemotron 3.5 ASR Streaming 0.6B | Adapter target ready | ~1.5 GB | Swift-native CoreML streaming ASR with incremental hypotheses |
 | MT | MADLAD-400 3B | Adapter target ready | ~2.8 GB | Practical first local translator |
 | MT | Apple Translation | Adapter target ready | System-managed | Fast on-device quality mode; macOS 26+ |
 | MT | TranslateGemma 4B 4-bit | Experimental adapter ready | ~2.4 GB | Faster than MADLAD, but below Apple EN-to-TR quality in the fixed fixture |
@@ -49,6 +45,12 @@ Natural voice:
 Silero VAD + Qwen3 ASR 0.6B + Apple Translation + language-pair terminology profile + Chatterbox MLX
 ```
 
+Realtime live translation:
+
+```text
+Silero VAD + Nemotron streaming ASR + Apple Translation + MOSS-TTS-Nano
+```
+
 Future/research:
 
 ```text
@@ -58,5 +60,5 @@ Silero VAD + Qwen3 ASR 1.7B + NLLB Distilled + Qwen3 TTS
 Research:
 
 ```text
-Nemotron ASR via mlx-audio, SeamlessStreaming direct S2ST
+SeamlessStreaming direct S2ST
 ```
