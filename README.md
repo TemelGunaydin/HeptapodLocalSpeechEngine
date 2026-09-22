@@ -278,6 +278,13 @@ stream end provide fallback endpoints. This avoids both waiting for an entire
 paragraph and speaking tiny partial fragments such as "One of the goals of."
 Use `--chunk-translation` to restore the older translate-every-chunk behavior.
 
+`--clause-endpoint` additionally releases clause-level prefixes at commas,
+semicolons, or colons once the clause has enough words (four at low latency,
+six when balanced), so synthesis starts before the sentence completes. The
+terminal-punctuation endpoint still wins when both fire, and the post-editing
+translator carries the accepted clause history into the next flush. The `low`
+latency preset enables clause endpointing by default.
+
 Low and balanced latency presets also enable ASR stabilization. The current
 Qwen adapter is still a chunk decoder, but the live session now wraps it in a
 ring-buffer/sliding-window policy: each new speech chunk is decoded with recent
@@ -326,10 +333,11 @@ xcrun swift run HeptapodLiveSpeechDemo -- \
 
 `--latency balanced` is the default for live demos. It uses 1 second capture
 chunks, stable-prefix ASR, terminal-punctuation endpoints, and a four-segment
-safety flush. The `low` preset uses 0.75 second chunks and a single buffered
-segment; it starts sooner but often splits a sentence into unnatural phrases.
-The `quality` preset also releases completed sentences at terminal punctuation,
-but keeps its longer capture window and eight-segment safety limit for context.
+safety flush. The `low` preset uses 0.75 second chunks, a single buffered
+segment, and clause-level endpoints; it starts sooner but often splits a
+sentence into unnatural phrases. The `quality` preset also releases completed
+sentences at terminal punctuation, but keeps its longer capture window and
+eight-segment safety limit for context.
 
 For better sentence context at the cost of waiting longer before the first
 translation, use:
@@ -718,13 +726,14 @@ Useful advanced metrics:
 
 The current implementation is segment-based by default: speech is processed in short chunks,
 then translated and synthesized. Streaming ASR with `--asr nemotron` already
-emits incremental partial transcripts and stable-prefix word deltas. The
-remaining steps toward a full OpenAI-Realtime-style experience are:
+emits incremental partial transcripts and stable-prefix word deltas, and
+`--clause-endpoint` feeds translation and TTS from clause-level prefixes
+before the sentence completes. The remaining steps toward a full
+OpenAI-Realtime-style experience are:
 
 - incremental text translation of a growing hypothesis prefix,
 - revision events that supersede an already-emitted translation,
-- cancellation/trimming of already-scheduled playback audio,
-- streaming TTS fed from stable prefixes before sentence flush.
+- cancellation/trimming of already-scheduled playback audio.
 
 These can be added incrementally while preserving the existing pipeline contracts.
 

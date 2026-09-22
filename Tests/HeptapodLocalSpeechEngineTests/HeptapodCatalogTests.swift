@@ -2235,6 +2235,194 @@ func sentenceBufferedLiveSessionMergesCorrectedTailAfterLeadingWindowNoise() asy
 }
 
 @Test
+func sentenceBufferedLiveSessionFlushesAtClausePunctuation() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("One of the goals of the system is speed,".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("and streaming recognition helps".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        flushOnClausePunctuation: true,
+        minimumWordsForClauseEndpoint: 6
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == [
+        "One of the goals of the system is speed,",
+        "and streaming recognition helps"
+    ])
+}
+
+@Test
+func clauseFlushRespectsMinimumWordCount() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("Hello, world is not enough words here,".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        flushOnClausePunctuation: true,
+        minimumWordsForClauseEndpoint: 6
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == ["Hello, world is not enough words here,"])
+}
+
+@Test
+func clauseFlushStaysOffByDefault() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: UTF8ChunkRecognizer(),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("One of the goals of the system is speed,".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("and streaming recognition helps".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+
+    let events = await session.runSentenceBuffered(chunks: source.chunks())
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == [
+        "One of the goals of the system is speed, and streaming recognition helps"
+    ])
+}
+
+@Test
+func streamingSessionFlushesClausesFromStablePartials() async throws {
+    let configuration = HeptapodPipelineConfiguration(
+        speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+        textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+        speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+        voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+    )
+    let session = ScriptedStreamingRecognitionSession(
+        partialBatches: [
+            ["One of the goals"],
+            ["One of the goals of the system is speed, and"],
+            ["One of the goals of the system is speed, and streaming"]
+        ],
+        finalText: "One of the goals of the system is speed, and streaming"
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: configuration,
+        vad: StubVoiceActivityDetector(),
+        recognizer: ScriptedStreamingRecognizer(sessions: [session]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let liveSession = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr"
+    )
+    let source = HeptapodArrayAudioChunkSource(
+        audioChunks: [
+            HeptapodAudioChunk(pcm16: Data("a".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("b".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data("c".utf8), sampleRate: 16_000),
+            HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000)
+        ]
+    )
+    let endpointing = HeptapodSentenceEndpointingConfiguration(
+        flushOnClausePunctuation: true,
+        minimumWordsForClauseEndpoint: 6
+    )
+
+    let events = await liveSession.runSentenceBuffered(chunks: source.chunks(), endpointing: endpointing)
+    var resultTexts: [String] = []
+
+    for try await event in events {
+        if case .result(_, let result) = event {
+            resultTexts.append(result.transcript.text)
+        }
+    }
+
+    #expect(resultTexts == [
+        "One of the goals of the system is speed,",
+        "and streaming"
+    ])
+}
+
+@Test
 func sentenceBufferedLiveSessionSplitsASRWindowAtIntraChunkSilence() async throws {
     let configuration = HeptapodPipelineConfiguration(
         speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,

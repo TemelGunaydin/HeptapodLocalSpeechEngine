@@ -100,10 +100,12 @@ public struct HeptapodSentenceEndpointingConfiguration: Sendable {
     public let flushOnSilence: Bool
     public let flushOnStreamEnd: Bool
     public let flushOnTerminalPunctuation: Bool
+    public let flushOnClausePunctuation: Bool
     public let maximumBufferedSegments: Int
     /// Bounds synthesized segments queued for playback, not the incoming transcript queue.
     public let maximumPendingOutputs: Int
     public let minimumWordsForPunctuationEndpoint: Int
+    public let minimumWordsForClauseEndpoint: Int
     public let minimumSilenceEndpointDuration: TimeInterval
     public let asrStabilization: HeptapodASRStabilizationConfiguration
 
@@ -111,18 +113,22 @@ public struct HeptapodSentenceEndpointingConfiguration: Sendable {
         flushOnSilence: Bool = true,
         flushOnStreamEnd: Bool = true,
         flushOnTerminalPunctuation: Bool = false,
+        flushOnClausePunctuation: Bool = false,
         maximumBufferedSegments: Int = 8,
         maximumPendingOutputs: Int = 2,
         minimumWordsForPunctuationEndpoint: Int = 8,
+        minimumWordsForClauseEndpoint: Int = 6,
         minimumSilenceEndpointDuration: TimeInterval = 0.35,
         asrStabilization: HeptapodASRStabilizationConfiguration = .disabled
     ) {
         self.flushOnSilence = flushOnSilence
         self.flushOnStreamEnd = flushOnStreamEnd
         self.flushOnTerminalPunctuation = flushOnTerminalPunctuation
+        self.flushOnClausePunctuation = flushOnClausePunctuation
         self.maximumBufferedSegments = maximumBufferedSegments
         self.maximumPendingOutputs = max(1, maximumPendingOutputs)
         self.minimumWordsForPunctuationEndpoint = minimumWordsForPunctuationEndpoint
+        self.minimumWordsForClauseEndpoint = minimumWordsForClauseEndpoint
         self.minimumSilenceEndpointDuration = max(0, minimumSilenceEndpointDuration)
         self.asrStabilization = asrStabilization
     }
@@ -665,6 +671,16 @@ private func consumeSentenceBufferedTranscript(
         )
     }
 
+    if endpointing.flushOnClausePunctuation, pending.hasText {
+        await flushClausePending(
+            &pending,
+            at: index,
+            minimumWords: endpointing.minimumWordsForClauseEndpoint,
+            synthesisQueue: synthesisQueue,
+            sourceLanguageCode: sourceLanguageCode
+        )
+    }
+
     if shouldFlush(pending, endpointing: endpointing) {
         await flushPending(
             &pending,
@@ -810,6 +826,20 @@ private struct PendingSentence {
         return drain(split, fallbackLanguageCode: fallbackLanguageCode)
     }
 
+    mutating func drainClauseTranscript(
+        fallbackLanguageCode: String?,
+        minimumWords: Int
+    ) -> HeptapodTranscriptSegment? {
+        let split = TranscriptTranslationNormalizer.clauseTextAndRemainder(
+            text,
+            minimumWords: minimumWords
+        )
+        guard split.readyText.isEmpty == false else {
+            return nil
+        }
+        return drain(split, fallbackLanguageCode: fallbackLanguageCode)
+    }
+
     private mutating func drain(
         _ split: TranscriptTranslationNormalizer.Split,
         fallbackLanguageCode: String?
@@ -885,7 +915,21 @@ private struct TranscriptTranslationNormalizer {
     }
 
     static func completedTextAndRemainder(_ text: String, minimumWords: Int) -> Split {
-        let fragments = collapseDuplicatePrefixes(fragments(in: text))
+        boundaryTextAndRemainder(text, minimumWords: minimumWords, clauseBoundaries: false)
+    }
+
+    static func clauseTextAndRemainder(_ text: String, minimumWords: Int) -> Split {
+        boundaryTextAndRemainder(text, minimumWords: minimumWords, clauseBoundaries: true)
+    }
+
+    private static func boundaryTextAndRemainder(
+        _ text: String,
+        minimumWords: Int,
+        clauseBoundaries: Bool
+    ) -> Split {
+        let fragments = collapseDuplicatePrefixes(
+            fragments(in: text, clauseBoundaries: clauseBoundaries)
+        )
         guard fragments.isEmpty == false else {
             return Split(readyText: "", remainderText: "")
         }
@@ -971,14 +1015,16 @@ private struct TranscriptTranslationNormalizer {
         return currentIndex
     }
 
-    private static func fragments(in text: String) -> [Fragment] {
+    private static func fragments(in text: String, clauseBoundaries: Bool = false) -> [Fragment] {
         var result: [Fragment] = []
         var current = ""
         var index = text.startIndex
 
         while index < text.endIndex {
             let character = text[index]
-            if isTerminalPunctuation(character),
+            let isBoundary = isTerminalPunctuation(character)
+                || (clauseBoundaries && isClausePunctuation(character))
+            if isBoundary,
                isSentenceBoundary(after: index, in: text) {
                 appendFragment(current, punctuation: character, to: &result)
                 current.removeAll()
@@ -1212,6 +1258,10 @@ private struct TranscriptTranslationNormalizer {
             || character == "。" || character == "؟" || character == "！"
     }
 
+    private static func isClausePunctuation(_ character: Character) -> Bool {
+        character == "," || character == ";" || character == ":"
+    }
+
     private static func isSentenceBoundary(after index: String.Index, in text: String) -> Bool {
         let nextIndex = text.index(after: index)
         guard nextIndex < text.endIndex else {
@@ -1276,6 +1326,24 @@ private func flushCompletedPending(
     sourceLanguageCode: String?
 ) async -> Bool {
     guard let transcript = pending.drainCompletedTranscript(
+        fallbackLanguageCode: sourceLanguageCode,
+        minimumWords: minimumWords
+    ) else {
+        return false
+    }
+    await synthesisQueue.enqueue(index: index, transcript: transcript)
+    return true
+}
+
+@discardableResult
+private func flushClausePending(
+    _ pending: inout PendingSentence,
+    at index: Int,
+    minimumWords: Int,
+    synthesisQueue: LiveSynthesisQueue,
+    sourceLanguageCode: String?
+) async -> Bool {
+    guard let transcript = pending.drainClauseTranscript(
         fallbackLanguageCode: sourceLanguageCode,
         minimumWords: minimumWords
     ) else {

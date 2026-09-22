@@ -162,6 +162,7 @@ struct HeptapodLiveSpeechDemo {
         Target: \(targetLanguageCode)
         Speak: \(options.usesTextOnly ? "off" : (options.shouldSpeak || options.shouldPlayOutput ? "on" : "off"))
         Translation timing: \(options.usesSentenceBuffering ? "sentence/pause buffered" : "every chunk")
+        Clause endpointing: \(options.usesClauseEndpoint ? "flushes at clause punctuation" : "off")
         ASR stabilization: \(options.usesASRStabilization ? "sliding window stable-prefix" : "off")
         Latency preset: \(options.latencyPreset.rawValue)
         Chunk duration: \(String(format: "%.2f", options.chunkDurationSeconds))s
@@ -202,7 +203,10 @@ struct HeptapodLiveSpeechDemo {
           --max-buffered-segments <count>
                               Flush sentence buffer after this many ASR segments.
           --punctuation-endpoint
+                              Force flushing completed sentences at terminal punctuation.
                               Flush early when ASR text ends with sentence punctuation.
+          --clause-endpoint   Flush clause-level prefixes at commas, semicolons, or colons
+                              so synthesis starts before the sentence completes.
           --asr-stabilization
                               Force sliding-window stable-prefix ASR buffering.
           --no-asr-stabilization
@@ -688,6 +692,7 @@ private struct DemoOptions {
     let chunkDurationSeconds: Double
     let maximumBufferedSegments: Int
     let usesPunctuationEndpoint: Bool
+    let usesClauseEndpoint: Bool
     let usesASRStabilization: Bool
     let asrPreset: DemoASRPreset
     let mtBackend: DemoMTBackend
@@ -723,6 +728,7 @@ private struct DemoOptions {
         var chunkDurationSeconds: Double?
         var maximumBufferedSegments: Int?
         var usesPunctuationEndpoint = false
+        var usesClauseEndpoint = false
         var usesASRStabilization: Bool?
         var asrPreset = DemoASRPreset.compact
         var mtBackend = DemoMTBackend.madlad
@@ -789,6 +795,8 @@ private struct DemoOptions {
                 maximumBufferedSegments = value
             case "--punctuation-endpoint":
                 usesPunctuationEndpoint = true
+            case "--clause-endpoint":
+                usesClauseEndpoint = true
             case "--asr-stabilization":
                 usesASRStabilization = true
             case "--no-asr-stabilization":
@@ -885,6 +893,7 @@ private struct DemoOptions {
         self.chunkDurationSeconds = chunkDurationSeconds ?? latencyPreset.chunkDurationSeconds
         self.maximumBufferedSegments = maximumBufferedSegments ?? latencyPreset.maximumBufferedSegments
         self.usesPunctuationEndpoint = usesPunctuationEndpoint || latencyPreset.usesPunctuationEndpoint
+        self.usesClauseEndpoint = usesClauseEndpoint || latencyPreset.usesClauseEndpoint
         self.usesASRStabilization = usesASRStabilization ?? (usesTextOnly ? false : latencyPreset.usesASRStabilization)
         self.asrPreset = asrPreset
         self.mtBackend = mtBackend
@@ -982,8 +991,10 @@ private struct DemoOptions {
             flushOnSilence: true,
             flushOnStreamEnd: true,
             flushOnTerminalPunctuation: usesPunctuationEndpoint,
+            flushOnClausePunctuation: usesClauseEndpoint,
             maximumBufferedSegments: maximumBufferedSegments,
             minimumWordsForPunctuationEndpoint: latencyPreset.minimumWordsForPunctuationEndpoint,
+            minimumWordsForClauseEndpoint: latencyPreset.minimumWordsForClauseEndpoint,
             asrStabilization: usesASRStabilization
                 ? latencyPreset.asrStabilizationConfiguration
                 : .disabled
@@ -1118,6 +1129,26 @@ private enum DemoLatencyPreset: String {
             6
         case .quality:
             6
+        }
+    }
+
+    var usesClauseEndpoint: Bool {
+        switch self {
+        case .low:
+            true
+        case .balanced, .quality:
+            false
+        }
+    }
+
+    var minimumWordsForClauseEndpoint: Int {
+        switch self {
+        case .low:
+            4
+        case .balanced:
+            6
+        case .quality:
+            8
         }
     }
 
