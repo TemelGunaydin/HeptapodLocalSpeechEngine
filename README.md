@@ -350,15 +350,25 @@ Tools/run_live_translation.sh \
 ```
 
 Translation/TTS and playback are queued like a small backbuffer. Once a sentence
-or stable phrase is flushed, the live input loop submits it to a serial synthesis
-queue and immediately keeps consuming audio. Streaming TTS chunks are handed to
+or stable phrase is flushed, the live input loop submits it to a FIFO and
+immediately keeps consuming audio. Separate serial translation and synthesis
+workers prepare at most one translated segment ahead of the active synthesis.
+This overlaps MT for the next segment with TTS for the current one, preserving
+every queued segment and its order. Streaming TTS chunks are handed to
 the serial playback queue as soon as they arrive; the full waveform does not need
 to finish first. Speaker playback starts at `1.0x` and rises gradually to at most
-`1.15x` only when the backlog grows. WAV archive output remains at the original
-TTS rate. The next segment can transcribe while the previous segment is
+`1.15x` by default, based on queued PCM duration rather than segment count.
+Rate changes are limited by elapsed time, and the pitch setting is unchanged.
+WAV archive output remains at the original TTS rate. The next segment can transcribe while the previous segment is
 translating, synthesizing, or playing. When speaker output is enabled, the
-24 kHz playback graph is prepared before system capture starts. This avoids
-reconfiguring the macOS output graph when the first translated sentence arrives.
+initial 24 kHz playback graph is prepared before system capture starts; a TTS
+sample-rate change still reconfigures that graph.
+
+To allow faster catch-up speech, use `--max-playback-rate 1.35`. The supported
+range is `1.0...1.5`; `1.0` disables acceleration. The ceiling is not a constant
+speed, and no queued sentence is dropped. Faster playback trades speaking pace
+for less accumulated delay; it cannot guarantee bounded lag when translated
+speech is persistently longer than the source even at the chosen ceiling.
 
 Use `--text-only` when local TTS quality is not useful. In this mode the demo
 prepares only VAD, ASR, and translation, skips TTS model load/inference entirely,
@@ -368,9 +378,16 @@ audio playback events.
 Use `--trace /tmp/heptapod-run.jsonl` to write JSON-lines timestamps for later
 performance comparison. The trace records run start/finish, segment starts,
 per-segment audio RMS/peak levels, ASR-ready latency, output-queue wait, MT
-duration, TTS first-audio/full-output duration, playback-queue wait, queue
-backlogs, transcript/translation text, generated audio byte count, and the
-command used for the run.
+duration, prepared-translation wait (`TTS queue avg`), TTS first-audio/full-output
+duration, playback-queue wait, queue backlogs, transcript/translation text,
+generated audio byte count, and the command used for the run. With speaker
+output enabled, `playback_state` also records pending/peak PCM seconds,
+completed PCM seconds, and current/peak playback rate. PCM duration is measured
+at the original sample rate and decremented at processed playback completions,
+not a continuous estimate of remaining wall-clock time. The summary shows
+`Pending audio peak`, `Rate peak`, and `Played PCM`; older and WAV-only traces
+show `n/a` for these fields. See the measured behavior and limitations in the
+[duration-aware playback comparison](Experiments/Results/2026-09-26-duration-aware-playback-en-tr.md).
 
 Repeatable system-audio smoke test:
 

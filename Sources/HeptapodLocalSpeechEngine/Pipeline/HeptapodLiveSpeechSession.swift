@@ -22,6 +22,35 @@ public protocol HeptapodPlaybackBacklogAware: Sendable {
     func setPlaybackBacklog(segmentCount: Int) async
 }
 
+/// Receives each PCM chunk's duration before that chunk enters a playback relay.
+/// Durations are at the original sample rate, independent of playback speed.
+public protocol HeptapodPlaybackAudioTracking: Sendable {
+    func enqueuePlaybackAudio(duration: TimeInterval) async
+    func playbackAudioState() async -> HeptapodPlaybackAudioState?
+}
+
+public struct HeptapodPlaybackAudioState: Sendable {
+    public let pendingAudioDuration: TimeInterval
+    public let peakPendingAudioDuration: TimeInterval
+    public let completedAudioDuration: TimeInterval
+    public let playbackRate: Float
+    public let peakPlaybackRate: Float
+
+    public init(
+        pendingAudioDuration: TimeInterval,
+        peakPendingAudioDuration: TimeInterval,
+        completedAudioDuration: TimeInterval,
+        playbackRate: Float,
+        peakPlaybackRate: Float
+    ) {
+        self.pendingAudioDuration = pendingAudioDuration
+        self.peakPendingAudioDuration = peakPendingAudioDuration
+        self.completedAudioDuration = completedAudioDuration
+        self.playbackRate = playbackRate
+        self.peakPlaybackRate = peakPlaybackRate
+    }
+}
+
 public enum HeptapodLiveSpeechEvent: Sendable {
     case segmentStarted(index: Int)
     case audioLevel(index: Int, HeptapodAudioLevel)
@@ -1842,6 +1871,11 @@ private actor LiveSynthesisQueue {
         let transcript: HeptapodTranscriptSegment
     }
 
+    private struct PreparedOutput {
+        let input: PendingOutput
+        let translation: HeptapodTranslatedText
+    }
+
     private let pipeline: HeptapodSpeechToSpeechPipeline
     private let sourceLanguageCode: String?
     private let targetLanguageCode: String
@@ -1850,7 +1884,9 @@ private actor LiveSynthesisQueue {
     private let continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
     private let outputMode: HeptapodLiveOutputMode
     private var pending: [PendingOutput] = []
-    private var worker: Task<Void, Error>?
+    private var preparedOutput: PreparedOutput?
+    private var translationWorker: Task<Void, Error>?
+    private var synthesisWorker: Task<Void, Error>?
     private var queuedOutputCount = 0
     private var isCancelled = false
     private var failure: Error?
@@ -1887,19 +1923,23 @@ private actor LiveSynthesisQueue {
         queuedOutputCount += 1
         continuation.yield(.outputQueued(index: index, backlog: queuedOutputCount))
         pending.append(PendingOutput(index: index, transcript: transcript))
-        // Keep capture/ASR independent of playback; only one worker owns MT/TTS.
-        if worker == nil {
-            worker = Task { try await processPending() }
-        }
+        startTranslationIfPossible()
     }
 
-    private func processPending() async throws {
-        defer { worker = nil }
-        do {
-            while pending.isEmpty == false {
+    private func startTranslationIfPossible() {
+        guard isCancelled == false, failure == nil,
+              translationWorker == nil, preparedOutput == nil,
+              pending.isEmpty == false else {
+            return
+        }
+
+        // One translated segment may wait behind the active synthesis. Input/ASR
+        // never waits on this slot, and neither model is invoked concurrently with itself.
+        let output = pending.removeFirst()
+        translationWorker = Task {
+            do {
                 try Task.checkCancellation()
                 try checkHealthy()
-                let output = pending.removeFirst()
                 let index = output.index
                 let transcript = output.transcript
                 continuation.yield(.translationStarted(index: index))
@@ -1911,41 +1951,66 @@ private actor LiveSynthesisQueue {
                 try Task.checkCancellation()
                 try checkHealthy()
                 continuation.yield(.translationCompleted(index: index))
+                translationWorker = nil
 
                 switch outputMode {
                 case .speech:
-                    continuation.yield(.synthesisStarted(index: index))
-                    let speech = try await synthesizeForLivePlayback(
-                        pipeline: pipeline,
-                        translation: translation,
-                        voiceID: voiceID,
-                        index: index,
-                        playbackQueue: playbackQueue
-                    )
-                    try Task.checkCancellation()
-                    try checkHealthy()
-                    try await playbackQueue.checkHealthy()
-                    let result = HeptapodSpeechToSpeechResult(
-                        transcript: transcript,
-                        translation: translation,
-                        speech: speech
-                    )
-                    continuation.yield(.result(index: index, result))
+                    preparedOutput = PreparedOutput(input: output, translation: translation)
+                    startSynthesisIfPossible()
                 case .textOnly:
-                    try Task.checkCancellation()
-                    try checkHealthy()
                     continuation.yield(.translation(
                         index: index,
                         HeptapodLiveTranslationResult(transcript: transcript, translation: translation)
                     ))
+                    queuedOutputCount = max(0, queuedOutputCount - 1)
                 }
-                queuedOutputCount = max(0, queuedOutputCount - 1)
+                startTranslationIfPossible()
+            } catch {
+                translationWorker = nil
+                recordFailure(error)
+                throw error
             }
-        } catch {
-            pending.removeAll()
-            queuedOutputCount = 0
-            recordFailure(error)
-            throw error
+        }
+    }
+
+    private func startSynthesisIfPossible() {
+        guard isCancelled == false, failure == nil,
+              synthesisWorker == nil, let output = preparedOutput else {
+            return
+        }
+        preparedOutput = nil
+        synthesisWorker = Task {
+            do {
+                try Task.checkCancellation()
+                try checkHealthy()
+                let index = output.input.index
+                continuation.yield(.synthesisStarted(index: index))
+                let speech = try await synthesizeForLivePlayback(
+                    pipeline: pipeline,
+                    translation: output.translation,
+                    voiceID: voiceID,
+                    index: index,
+                    playbackQueue: playbackQueue
+                )
+                try Task.checkCancellation()
+                try checkHealthy()
+                try await playbackQueue.checkHealthy()
+                try Task.checkCancellation()
+                try checkHealthy()
+                continuation.yield(.result(index: index, HeptapodSpeechToSpeechResult(
+                    transcript: output.input.transcript,
+                    translation: output.translation,
+                    speech: speech
+                )))
+                queuedOutputCount = max(0, queuedOutputCount - 1)
+                synthesisWorker = nil
+                startSynthesisIfPossible()
+                startTranslationIfPossible()
+            } catch {
+                synthesisWorker = nil
+                recordFailure(error)
+                throw error
+            }
         }
     }
 
@@ -1955,6 +2020,11 @@ private actor LiveSynthesisQueue {
             return
         }
         failure = error
+        translationWorker?.cancel()
+        synthesisWorker?.cancel()
+        pending.removeAll()
+        preparedOutput = nil
+        queuedOutputCount = 0
         continuation.finish(throwing: error)
     }
 
@@ -1968,8 +2038,10 @@ private actor LiveSynthesisQueue {
     }
 
     func drain() async throws {
-        if let worker {
+        while let worker = translationWorker ?? synthesisWorker {
             try await awaitLiveQueueTask(worker)
+            try Task.checkCancellation()
+            try checkHealthy()
         }
         try Task.checkCancellation()
         try checkHealthy()
@@ -1980,8 +2052,10 @@ private actor LiveSynthesisQueue {
             return
         }
         isCancelled = true
-        worker?.cancel()
+        translationWorker?.cancel()
+        synthesisWorker?.cancel()
         pending.removeAll()
+        preparedOutput = nil
         queuedOutputCount = 0
     }
 }
@@ -2079,6 +2153,16 @@ private actor LivePlaybackQueue {
             return
         }
         continuation.yield(.synthesisAudioReady(index: index))
+    }
+
+    func audioProduced(duration: TimeInterval) async throws {
+        try Task.checkCancellation()
+        try checkHealthy()
+        if let trackingSink = sink as? any HeptapodPlaybackAudioTracking {
+            await trackingSink.enqueuePlaybackAudio(duration: duration)
+            try Task.checkCancellation()
+            try checkHealthy()
+        }
     }
 
     private func playbackFinished(
@@ -2196,6 +2280,9 @@ private func synthesizeForLivePlayback(
                 didMarkFirstAudioReady = true
             }
             if isPlaybackEnqueued {
+                try await playbackQueue.audioProduced(
+                    duration: Double(chunk.pcm16.count / 2) / Double(chunk.sampleRate)
+                )
                 relay.yield(chunk)
             }
         }

@@ -3,6 +3,20 @@ import Foundation
 import HeptapodLocalSpeechEngine
 
 public enum HeptapodSpeechSwiftAudioSamples {
+    static func playbackChunks(
+        from speech: HeptapodSynthesizedSpeech
+    ) -> some Sequence<HeptapodSynthesizedSpeech> {
+        let frameCount = max(1, speech.sampleRate / 5)
+        let byteCount = frameCount * MemoryLayout<Int16>.size
+        return stride(from: 0, to: speech.pcm16.count, by: byteCount).lazy.map { offset in
+            HeptapodSynthesizedSpeech(
+                pcm16: speech.pcm16.subdata(in: offset..<min(offset + byteCount, speech.pcm16.count)),
+                sampleRate: speech.sampleRate,
+                languageCode: speech.languageCode
+            )
+        }
+    }
+
     public static func floatSamples(from chunk: HeptapodAudioChunk, targetSampleRate: Int) -> [Float] {
         let samples = floatSamples(fromPCM16: chunk.pcm16)
         guard chunk.sampleRate != targetSampleRate else {

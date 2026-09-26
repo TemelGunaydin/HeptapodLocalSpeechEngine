@@ -93,10 +93,32 @@ The live session owns:
 - keeping input/ASR work moving while previous translated audio is translating,
   synthesizing, or playing.
 
-The sentence-buffered session uses one serial MT/TTS worker with a FIFO of
-pending transcripts. `maximumPendingOutputs` limits synthesized segments in the
-playback queue; it does not suspend capture/ASR when that queue fills. Completed
-work is released instead of retaining a task chain for the whole session.
+The sentence-buffered session uses separate serial MT and TTS workers with a
+FIFO of pending transcripts and a single prepared-translation slot. Translation
+of the next segment can overlap synthesis of the current segment, without
+concurrent calls to the same model or changes to source/context order.
+`maximumPendingOutputs` limits synthesized segments in the playback queue; it
+does not suspend capture/ASR when that queue fills. Both workers drain on normal
+input completion and are cancelled together on failure or session cancellation.
+Completed work is released instead of retaining a task chain for the whole session.
+
+Playback sinks can opt into `HeptapodPlaybackAudioTracking`. The producer
+announces each nonempty PCM chunk's original-rate duration before delivering
+it to the playback relay. The AVAudio sink subtracts durations only after
+processed `.dataPlayedBack` completions, so relay-buffered audio is counted
+even before it reaches the AVAudioEngine scheduling buffer. This accounting
+does not include PCM still buffered inside a synthesis provider.
+Long batch-TTS waveforms are scheduled as at most 200 ms PCM buffers without
+changing their byte order, giving cancellation and pacing regular completion
+points. The scheduling limit can overshoot by at most one such buffer.
+
+The AVAudio sink uses that duration to pace playback, with two seconds of
+headroom and a twenty-second recovery horizon. Rate changes are limited to
+0.05x per second upward and 0.10x per second downward. The default ceiling
+stays at 1.15x; the demo's `--max-playback-rate` permits 1.0...1.5. No text or
+audio segments are discarded. The existing segment-count hook remains a
+fallback for callers that do not announce PCM durations. Cancellation clears
+the pacing state, and the WAV sink archives unmodified-rate synthesis.
 
 This is not an end-to-end memory or latency bound. Pending text can still grow
 when sustained MT/TTS throughput is below the incoming speech rate, and PCM

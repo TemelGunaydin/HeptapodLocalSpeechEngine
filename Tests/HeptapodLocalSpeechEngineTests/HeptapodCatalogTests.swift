@@ -789,6 +789,8 @@ func liveSessionStreamsFirstAudioBeforeSynthesisCompletes() async throws {
 
     #expect(await probe.wasFirstPlaybackChunkObservedBeforeSynthesisFinished())
     #expect(await playbackSink.streamedChunks() == [Data([1, 2]), Data([3, 4])])
+    #expect(await playbackSink.announcedDurations() == [1.0 / 48_000, 1.0 / 48_000])
+    #expect(await playbackSink.audioWasAnnouncedBeforePlayback())
     #expect(resultPCM == Data([1, 2, 3, 4]))
 }
 
@@ -3085,9 +3087,11 @@ private actor StreamingProgressProbe {
     }
 }
 
-private actor StreamingRecordingPlaybackSink: HeptapodStreamingSpeechPlaybackSink {
+private actor StreamingRecordingPlaybackSink: HeptapodStreamingSpeechPlaybackSink, HeptapodPlaybackAudioTracking {
     private let probe: StreamingProgressProbe
     private var chunks: [Data] = []
+    private var durations: [TimeInterval] = []
+    private var wasAnnouncedBeforePlayback = true
 
     init(probe: StreamingProgressProbe) {
         self.probe = probe
@@ -3101,6 +3105,7 @@ private actor StreamingRecordingPlaybackSink: HeptapodStreamingSpeechPlaybackSin
         _ speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
     ) async throws {
         for try await chunk in speechStream {
+            wasAnnouncedBeforePlayback = wasAnnouncedBeforePlayback && durations.count > chunks.count
             if chunks.isEmpty {
                 await probe.observeFirstPlaybackChunk()
             }
@@ -3111,6 +3116,16 @@ private actor StreamingRecordingPlaybackSink: HeptapodStreamingSpeechPlaybackSin
     func streamedChunks() -> [Data] {
         chunks
     }
+
+    func enqueuePlaybackAudio(duration: TimeInterval) async {
+        durations.append(duration)
+    }
+
+    func playbackAudioState() async -> HeptapodPlaybackAudioState? { nil }
+
+    func announcedDurations() -> [TimeInterval] { durations }
+
+    func audioWasAnnouncedBeforePlayback() -> Bool { wasAnnouncedBeforePlayback }
 }
 
 private struct StubTranslator: HeptapodTextTranslator {

@@ -58,6 +58,7 @@ class TraceSummary:
     translation_latency: LatencyStats
     output_queue_wait_latency: LatencyStats
     translation_stage_latency: LatencyStats
+    synthesis_queue_wait_latency: LatencyStats
     synthesis_first_audio_latency: LatencyStats
     synthesis_stage_latency: LatencyStats
     playback_queue_wait_latency: LatencyStats
@@ -65,6 +66,9 @@ class TraceSummary:
     playback_latency: LatencyStats
     peak_output_backlog: int
     peak_playback_backlog: int
+    peak_pending_audio_seconds: float | None
+    peak_playback_rate: float | None
+    completed_audio_seconds: float | None
     audio_rms: LatencyStats
     audio_peak: LatencyStats
     examples: list[TranslationExample]
@@ -79,6 +83,7 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
     translation_latencies: list[float] = []
     output_queue_wait_latencies: list[float] = []
     translation_stage_latencies: list[float] = []
+    synthesis_queue_wait_latencies: list[float] = []
     synthesis_first_audio_latencies: list[float] = []
     synthesis_stage_latencies: list[float] = []
     playback_queue_wait_latencies: list[float] = []
@@ -91,6 +96,9 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
     examples_by_index: dict[int, list[TranslationExample]] = defaultdict(list)
     peak_output_backlog = 0
     peak_playback_backlog = 0
+    peak_pending_audio_seconds: float | None = None
+    peak_playback_rate: float | None = None
+    completed_audio_seconds: float | None = None
     run_finished = False
 
     with path.open("r", encoding="utf-8") as handle:
@@ -134,6 +142,8 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
             if isinstance(raw_queue_wait, (int, float)):
                 if event == "translation_started":
                     output_queue_wait_latencies.append(float(raw_queue_wait))
+                elif event == "synthesis_started":
+                    synthesis_queue_wait_latencies.append(float(raw_queue_wait))
                 elif event == "playback_started":
                     playback_queue_wait_latencies.append(float(raw_queue_wait))
 
@@ -152,6 +162,17 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
                     peak_output_backlog = max(peak_output_backlog, raw_backlog)
                 elif event == "playback_queued":
                     peak_playback_backlog = max(peak_playback_backlog, raw_backlog)
+
+            if event == "playback_state":
+                raw_peak_audio = item.get("peakPendingAudioDurationSeconds")
+                raw_peak_rate = item.get("peakPlaybackRate")
+                raw_completed_audio = item.get("completedAudioDurationSeconds")
+                if isinstance(raw_peak_audio, (int, float)):
+                    peak_pending_audio_seconds = max(peak_pending_audio_seconds or 0, float(raw_peak_audio))
+                if isinstance(raw_peak_rate, (int, float)):
+                    peak_playback_rate = max(peak_playback_rate or 0, float(raw_peak_rate))
+                if isinstance(raw_completed_audio, (int, float)):
+                    completed_audio_seconds = float(raw_completed_audio)
 
             raw_playback_latency = item.get("playbackLatencySeconds")
             raw_first_audio_latency = item.get("firstAudioLatencySeconds")
@@ -207,6 +228,7 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
         translation_latency=LatencyStats.from_values(translation_latencies),
         output_queue_wait_latency=LatencyStats.from_values(output_queue_wait_latencies),
         translation_stage_latency=LatencyStats.from_values(translation_stage_latencies),
+        synthesis_queue_wait_latency=LatencyStats.from_values(synthesis_queue_wait_latencies),
         synthesis_first_audio_latency=LatencyStats.from_values(synthesis_first_audio_latencies),
         synthesis_stage_latency=LatencyStats.from_values(synthesis_stage_latencies),
         playback_queue_wait_latency=LatencyStats.from_values(playback_queue_wait_latencies),
@@ -216,6 +238,9 @@ def load_trace(path: Path, label: str | None = None) -> TraceSummary:
         playback_latency=LatencyStats.from_values(playback_latencies),
         peak_output_backlog=peak_output_backlog,
         peak_playback_backlog=peak_playback_backlog,
+        peak_pending_audio_seconds=peak_pending_audio_seconds,
+        peak_playback_rate=peak_playback_rate,
+        completed_audio_seconds=completed_audio_seconds,
         audio_rms=LatencyStats.from_values(audio_rms_values),
         audio_peak=LatencyStats.from_values(audio_peak_values),
         examples=examples,
@@ -262,8 +287,8 @@ def first_command_arg(command: list[str], option: str) -> str:
 
 def markdown_table(summaries: list[TraceSummary]) -> str:
     rows = [
-        "| Trace | ASR | Chunk | Buffer | Segments | Audio RMS | Audio Peak | Transcripts | Outputs | Repeated MT | ASR avg | Output queue avg | MT avg | Output avg | Playbacks | First audio avg | TTS first avg | TTS full avg | Playback queue avg | Peak queues | Duration avg | Finished |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |",
+        "| Trace | ASR | Chunk | Buffer | Segments | Audio RMS | Audio Peak | Transcripts | Outputs | Repeated MT | ASR avg | Output queue avg | MT avg | Output avg | Playbacks | First audio avg | TTS queue avg | TTS first avg | TTS full avg | Playback queue avg | Peak queues | Pending audio peak | Rate peak | Played PCM | Duration avg | Finished |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- |",
     ]
     for summary in summaries:
         command = summary.command
@@ -274,9 +299,9 @@ def markdown_table(summaries: list[TraceSummary]) -> str:
             "| {label} | {asr} | {chunk} | {buffer} | {segments} | {audio_rms} | "
                 "{audio_peak} | {transcripts} | {translations} | {repeated_translations} | "
                 "{asr_avg} | {output_queue_avg} | {translation_stage_avg} | {mt_avg} | "
-                "{playbacks} | {playback_start_avg} | {synthesis_first_avg} | {synthesis_avg} | "
+                "{playbacks} | {playback_start_avg} | {synthesis_queue_avg} | {synthesis_first_avg} | {synthesis_avg} | "
                 "{playback_queue_avg} | "
-                "{peak_queues} | {playback_avg} | {finished} |".format(
+                "{peak_queues} | {pending_audio_peak} | {rate_peak} | {played_pcm} | {playback_avg} | {finished} |".format(
                 label=summary.label,
                 asr=asr,
                 chunk=chunk,
@@ -293,10 +318,14 @@ def markdown_table(summaries: list[TraceSummary]) -> str:
                 mt_avg=format_seconds(summary.translation_latency.average),
                 playbacks=summary.events["playback_completed"],
                 playback_start_avg=format_seconds(summary.playback_start_latency.average),
+                synthesis_queue_avg=format_seconds(summary.synthesis_queue_wait_latency.average),
                 synthesis_first_avg=format_seconds(summary.synthesis_first_audio_latency.average),
                 synthesis_avg=format_seconds(summary.synthesis_stage_latency.average),
                 playback_queue_avg=format_seconds(summary.playback_queue_wait_latency.average),
                 peak_queues=f"{summary.peak_output_backlog}/{summary.peak_playback_backlog}",
+                pending_audio_peak=format_seconds(summary.peak_pending_audio_seconds),
+                rate_peak=f"{summary.peak_playback_rate:.3f}x" if summary.peak_playback_rate is not None else "n/a",
+                played_pcm=format_seconds(summary.completed_audio_seconds),
                 playback_avg=format_seconds(summary.playback_latency.average),
                 finished="yes" if summary.run_finished else "no",
             )

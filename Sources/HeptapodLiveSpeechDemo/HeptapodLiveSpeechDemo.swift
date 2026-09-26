@@ -52,6 +52,7 @@ struct HeptapodLiveSpeechDemo {
                     sourceLanguageCode: sourceLanguageCode,
                     targetLanguageCode: targetLanguageCode,
                     shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
+                    maximumPlaybackRate: options.maximumPlaybackRate,
                     outputDirectory: options.usesTextOnly ? nil : options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
                     durationSeconds: options.durationSeconds,
@@ -67,6 +68,7 @@ struct HeptapodLiveSpeechDemo {
                     targetLanguageCode: targetLanguageCode,
                     durationSeconds: options.durationSeconds,
                     shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
+                    maximumPlaybackRate: options.maximumPlaybackRate,
                     outputDirectory: options.usesTextOnly ? nil : options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
                     endpointing: options.endpointingConfiguration,
@@ -81,6 +83,7 @@ struct HeptapodLiveSpeechDemo {
                     targetLanguageCode: targetLanguageCode,
                     durationSeconds: options.durationSeconds,
                     shouldPlayOutput: options.shouldPlayOutput && options.usesTextOnly == false,
+                    maximumPlaybackRate: options.maximumPlaybackRate,
                     outputDirectory: options.usesTextOnly ? nil : options.outputDirectory,
                     chunkDurationSeconds: options.chunkDurationSeconds,
                     endpointing: options.endpointingConfiguration,
@@ -233,6 +236,9 @@ struct HeptapodLiveSpeechDemo {
           --trace <path>      Write JSON-lines event timestamps for latency comparison.
           --speak             Preview mode only: speak translated text with /usr/bin/say.
           --play-output       Real live mode: play synthesized speech with AVAudioEngine.
+          --max-playback-rate <rate>
+                              Adaptive playback ceiling, 1.0...1.5. Default: 1.15.
+                              Higher values reduce queued audio at the cost of faster speech.
           --cache-status      Print starter model cache paths and cached sizes.
           --help              Show this help.
         """)
@@ -297,6 +303,7 @@ struct HeptapodLiveSpeechDemo {
         targetLanguageCode: String,
         durationSeconds: Double?,
         shouldPlayOutput: Bool,
+        maximumPlaybackRate: Float,
         outputDirectory: String?,
         chunkDurationSeconds: Double,
         endpointing: HeptapodSentenceEndpointingConfiguration,
@@ -312,6 +319,7 @@ struct HeptapodLiveSpeechDemo {
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
         let playbackSink = try await makePlaybackSink(
             shouldPlayOutput: shouldPlayOutput,
+            maximumPlaybackRate: maximumPlaybackRate,
             fileSink: fileSink
         )
         try await runLiveSession(
@@ -335,6 +343,7 @@ struct HeptapodLiveSpeechDemo {
         targetLanguageCode: String,
         durationSeconds: Double?,
         shouldPlayOutput: Bool,
+        maximumPlaybackRate: Float,
         outputDirectory: String?,
         chunkDurationSeconds: Double,
         endpointing: HeptapodSentenceEndpointingConfiguration,
@@ -356,6 +365,7 @@ struct HeptapodLiveSpeechDemo {
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
         let playbackSink = try await makePlaybackSink(
             shouldPlayOutput: shouldPlayOutput,
+            maximumPlaybackRate: maximumPlaybackRate,
             fileSink: fileSink
         )
         try await runLiveSession(
@@ -382,6 +392,7 @@ struct HeptapodLiveSpeechDemo {
         sourceLanguageCode: String,
         targetLanguageCode: String,
         shouldPlayOutput: Bool,
+        maximumPlaybackRate: Float,
         outputDirectory: String?,
         chunkDurationSeconds: Double,
         durationSeconds: Double?,
@@ -399,6 +410,7 @@ struct HeptapodLiveSpeechDemo {
         let fileSink = outputDirectory.map { HeptapodWAVFilePlaybackSink(outputDirectory: URL(fileURLWithPath: $0)) }
         let playbackSink = try await makePlaybackSink(
             shouldPlayOutput: shouldPlayOutput,
+            maximumPlaybackRate: maximumPlaybackRate,
             fileSink: fileSink
         )
         try await runLiveSession(
@@ -418,6 +430,7 @@ struct HeptapodLiveSpeechDemo {
 
     private static func makePlaybackSink(
         shouldPlayOutput: Bool,
+        maximumPlaybackRate: Float,
         fileSink: HeptapodWAVFilePlaybackSink?
     ) async throws -> (any HeptapodSpeechPlaybackSink)? {
         var sinks: [any HeptapodSpeechPlaybackSink] = []
@@ -427,7 +440,7 @@ struct HeptapodLiveSpeechDemo {
         if shouldPlayOutput {
             let playbackSink = HeptapodAVAudioPlaybackSink(
                 playbackRate: 1,
-                maximumPlaybackRate: 1.15
+                maximumPlaybackRate: maximumPlaybackRate
             )
             try await playbackSink.prepare()
             sinks.append(playbackSink)
@@ -480,6 +493,7 @@ struct HeptapodLiveSpeechDemo {
         var transcriptTimes: [Int: Date] = [:]
         var outputQueuedTimes: [Int: Date] = [:]
         var translationStartTimes: [Int: Date] = [:]
+        var translationReadyTimes: [Int: [Date]] = [:]
         var synthesisStartTimes: [Int: Date] = [:]
         var firstAudioReadyTimes: [Int: Date] = [:]
         var resultTimes: [Int: Date] = [:]
@@ -545,6 +559,9 @@ struct HeptapodLiveSpeechDemo {
                 )
             case .translationCompleted(let index):
                 let completedAt = Date()
+                if outputMode == .speech {
+                    translationReadyTimes[index, default: []].append(completedAt)
+                }
                 try trace?.record(
                     event: "translation_completed",
                     index: index,
@@ -553,8 +570,20 @@ struct HeptapodLiveSpeechDemo {
                     }
                 )
             case .synthesisStarted(let index):
-                synthesisStartTimes[index] = Date()
-                try trace?.record(event: "synthesis_started", index: index)
+                let startedAt = Date()
+                synthesisStartTimes[index] = startedAt
+                var readyTimes = translationReadyTimes[index] ?? []
+                let translatedAt = readyTimes.isEmpty ? nil : readyTimes.removeFirst()
+                if readyTimes.isEmpty {
+                    translationReadyTimes.removeValue(forKey: index)
+                } else {
+                    translationReadyTimes[index] = readyTimes
+                }
+                try trace?.record(
+                    event: "synthesis_started",
+                    index: index,
+                    queueWaitSeconds: translatedAt.map { startedAt.timeIntervalSince($0) }
+                )
             case .result(let index, let result):
                 printResult(result)
                 let readyAt = Date()
@@ -650,6 +679,16 @@ struct HeptapodLiveSpeechDemo {
                     playbackDurationSeconds: playbackDurationSeconds
                 )
             }
+            if let trace, let trackingSink = playbackSink as? any HeptapodPlaybackAudioTracking {
+                switch event {
+                case .synthesisAudioReady, .result, .playbackQueued, .playbackCompleted:
+                    if let state = await trackingSink.playbackAudioState() {
+                        try trace.record(event: "playback_state", playbackAudioState: state)
+                    }
+                default:
+                    break
+                }
+            }
         }
         try trace?.record(event: "run_finished")
     }
@@ -684,6 +723,7 @@ private struct DemoOptions {
     let usesSystemAudio: Bool
     let shouldSpeak: Bool
     let shouldPlayOutput: Bool
+    let maximumPlaybackRate: Float
     let shouldPrintHelp: Bool
     let shouldPrintCacheStatus: Bool
     let usesTextOnly: Bool
@@ -720,6 +760,7 @@ private struct DemoOptions {
         var usesSystemAudio = false
         var shouldSpeak = false
         var shouldPlayOutput = false
+        var maximumPlaybackRate: Float = 1.15
         var shouldPrintHelp = false
         var shouldPrintCacheStatus = false
         var usesTextOnly = false
@@ -769,6 +810,12 @@ private struct DemoOptions {
                 shouldSpeak = true
             case "--play-output":
                 shouldPlayOutput = true
+            case "--max-playback-rate":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let value = Float(rawValue), value.isFinite, (1...1.5).contains(value) else {
+                    throw DemoError.invalidRangeOption(argument, rawValue, "1.0...1.5")
+                }
+                maximumPlaybackRate = value
             case "--cache-status":
                 shouldPrintCacheStatus = true
             case "--chunk-translation":
@@ -885,6 +932,7 @@ private struct DemoOptions {
         self.usesSystemAudio = usesSystemAudio
         self.shouldSpeak = shouldSpeak
         self.shouldPlayOutput = shouldPlayOutput
+        self.maximumPlaybackRate = maximumPlaybackRate
         self.shouldPrintHelp = shouldPrintHelp
         self.shouldPrintCacheStatus = shouldPrintCacheStatus
         self.usesTextOnly = usesTextOnly
@@ -1225,7 +1273,8 @@ private final class LiveTraceRecorder {
         playbackDurationSeconds: TimeInterval? = nil,
         stageDurationSeconds: TimeInterval? = nil,
         queueWaitSeconds: TimeInterval? = nil,
-        backlogSegments: Int? = nil
+        backlogSegments: Int? = nil,
+        playbackAudioState: HeptapodPlaybackAudioState? = nil
     ) throws {
         let now = Date()
         let traceEvent = LiveTraceEvent(
@@ -1250,6 +1299,11 @@ private final class LiveTraceRecorder {
             stageDurationSeconds: stageDurationSeconds,
             queueWaitSeconds: queueWaitSeconds,
             backlogSegments: backlogSegments,
+            pendingAudioDurationSeconds: playbackAudioState?.pendingAudioDuration,
+            peakPendingAudioDurationSeconds: playbackAudioState?.peakPendingAudioDuration,
+            completedAudioDurationSeconds: playbackAudioState?.completedAudioDuration,
+            playbackRate: playbackAudioState?.playbackRate,
+            peakPlaybackRate: playbackAudioState?.peakPlaybackRate,
             command: CommandLine.arguments
         )
         var data = try encoder.encode(traceEvent)
@@ -1280,12 +1334,18 @@ private struct LiveTraceEvent: Encodable {
     let stageDurationSeconds: TimeInterval?
     let queueWaitSeconds: TimeInterval?
     let backlogSegments: Int?
+    let pendingAudioDurationSeconds: TimeInterval?
+    let peakPendingAudioDurationSeconds: TimeInterval?
+    let completedAudioDurationSeconds: TimeInterval?
+    let playbackRate: Float?
+    let peakPlaybackRate: Float?
     let command: [String]
 }
 
 private struct CompositePlaybackSink:
     HeptapodStreamingSpeechPlaybackSink,
-    HeptapodPlaybackBacklogAware
+    HeptapodPlaybackBacklogAware,
+    HeptapodPlaybackAudioTracking
 {
     let sinks: [any HeptapodSpeechPlaybackSink]
 
@@ -1337,6 +1397,26 @@ private struct CompositePlaybackSink:
                 await backlogAwareSink.setPlaybackBacklog(segmentCount: segmentCount)
             }
         }
+    }
+
+    func enqueuePlaybackAudio(duration: TimeInterval) async {
+        for sink in sinks {
+            if let trackingSink = sink as? any HeptapodPlaybackAudioTracking {
+                await trackingSink.enqueuePlaybackAudio(duration: duration)
+            }
+        }
+    }
+
+    func playbackAudioState() async -> HeptapodPlaybackAudioState? {
+        // The demo has at most one timed audio sink; the WAV archive does not
+        // consume wall-clock playback time and does not implement tracking.
+        for sink in sinks {
+            if let trackingSink = sink as? any HeptapodPlaybackAudioTracking,
+               let state = await trackingSink.playbackAudioState() {
+                return state
+            }
+        }
+        return nil
     }
 }
 

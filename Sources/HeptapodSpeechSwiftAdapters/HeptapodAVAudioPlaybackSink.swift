@@ -5,7 +5,8 @@ import HeptapodLocalSpeechEngine
 public actor HeptapodAVAudioPlaybackSink:
     HeptapodStreamingSpeechPlaybackSink,
     HeptapodCancellableSpeechPlaybackSink,
-    HeptapodPlaybackBacklogAware
+    HeptapodPlaybackBacklogAware,
+    HeptapodPlaybackAudioTracking
 {
     private struct ScheduledBuffer {
         let duration: TimeInterval
@@ -15,14 +16,13 @@ public actor HeptapodAVAudioPlaybackSink:
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let timePitch = AVAudioUnitTimePitch()
-    private let basePlaybackRate: Float
-    private let maximumPlaybackRate: Float
+    private var pacing: HeptapodPlaybackPacing
+    private let clockOrigin = ContinuousClock.now
     private let startupBufferDuration: TimeInterval
     private let maximumBufferedDuration: TimeInterval
     private var isPrepared = false
     private var playbackSampleRate: Double?
     private var playbackChannelCount: AVAudioChannelCount?
-    private var requestedPlaybackRate: Float
     private var scheduledBuffers: [ScheduledBuffer] = []
     private var bufferedDuration: TimeInterval = 0
     private var playbackGeneration = 0
@@ -33,15 +33,12 @@ public actor HeptapodAVAudioPlaybackSink:
         startupBufferDuration: TimeInterval = 0.16,
         maximumBufferedDuration: TimeInterval = 1.0
     ) {
-        let normalizedPlaybackRate = min(max(playbackRate, 0.5), 2)
-        basePlaybackRate = normalizedPlaybackRate
-        self.maximumPlaybackRate = min(max(maximumPlaybackRate, basePlaybackRate), 2)
+        pacing = HeptapodPlaybackPacing(baseRate: playbackRate, maximumRate: maximumPlaybackRate)
         self.startupBufferDuration = max(0, startupBufferDuration)
         self.maximumBufferedDuration = max(
             self.startupBufferDuration,
             max(0, maximumBufferedDuration)
         )
-        requestedPlaybackRate = normalizedPlaybackRate
     }
 
     public func prepare(sampleRate: Int = 24_000) throws {
@@ -87,24 +84,30 @@ public actor HeptapodAVAudioPlaybackSink:
                 }
                 streamSampleRate = speech.sampleRate
 
-                let scheduled = try schedule(speech)
-                didScheduleAudio = true
-                let scheduledBuffer = ScheduledBuffer(
-                    duration: scheduled.duration,
-                    completion: scheduled.completion
-                )
-                scheduledBuffers.append(scheduledBuffer)
-                self.bufferedDuration += scheduled.duration
-                bufferedDuration += scheduled.duration
-                if didStartPlayback == false, bufferedDuration >= startupBufferDuration {
-                    player.play()
-                    didStartPlayback = true
-                } else if didStartPlayback, player.isPlaying == false {
-                    player.play()
-                }
+                // Bound scheduling even when a batch TTS provider yields one
+                // long waveform; completions also keep the pacing loop moving.
+                for chunk in HeptapodSpeechSwiftAudioSamples.playbackChunks(from: speech) {
+                    try Task.checkCancellation()
+                    guard playbackGeneration == generation else { throw CancellationError() }
+                    let scheduled = try schedule(chunk)
+                    didScheduleAudio = true
+                    let scheduledBuffer = ScheduledBuffer(
+                        duration: scheduled.duration,
+                        completion: scheduled.completion
+                    )
+                    scheduledBuffers.append(scheduledBuffer)
+                    self.bufferedDuration += scheduled.duration
+                    bufferedDuration += scheduled.duration
+                    if didStartPlayback == false, bufferedDuration >= startupBufferDuration {
+                        player.play()
+                        didStartPlayback = true
+                    } else if didStartPlayback, player.isPlaying == false {
+                        player.play()
+                    }
 
-                while self.bufferedDuration > maximumBufferedDuration {
-                    try await waitForOldestBuffer(generation: generation)
+                    while self.bufferedDuration > maximumBufferedDuration {
+                        try await waitForOldestBuffer(generation: generation)
+                    }
                 }
             }
 
@@ -136,24 +139,28 @@ public actor HeptapodAVAudioPlaybackSink:
         }
         scheduledBuffers.removeAll()
         bufferedDuration = 0
-        requestedPlaybackRate = basePlaybackRate
-        timePitch.rate = requestedPlaybackRate
+        pacing.reset()
+        timePitch.rate = pacing.rate
     }
 
     public func setPlaybackBacklog(segmentCount: Int) async {
-        let rateIncrease: Float
-        switch segmentCount {
-        case ...1:
-            rateIncrease = 0
-        case 2:
-            rateIncrease = 0.05
-        case 3:
-            rateIncrease = 0.10
-        default:
-            rateIncrease = 0.15
-        }
-        requestedPlaybackRate = min(maximumPlaybackRate, basePlaybackRate + rateIncrease)
-        timePitch.rate = requestedPlaybackRate
+        pacing.setBacklog(segmentCount, at: elapsedSeconds)
+        timePitch.rate = pacing.rate
+    }
+
+    public func enqueuePlaybackAudio(duration: TimeInterval) async {
+        guard Task.isCancelled == false else { return }
+        pacing.enqueueAudio(duration: duration, at: elapsedSeconds)
+        timePitch.rate = pacing.rate
+    }
+
+    public func playbackAudioState() async -> HeptapodPlaybackAudioState? {
+        pacing.isTrackingAudio ? pacing.state : nil
+    }
+
+    private var elapsedSeconds: TimeInterval {
+        let components = clockOrigin.duration(to: .now).components
+        return Double(components.seconds) + Double(components.attoseconds) / 1e18
     }
 
     private func schedule(
@@ -222,6 +229,8 @@ public actor HeptapodAVAudioPlaybackSink:
         }
         scheduledBuffers.removeFirst()
         bufferedDuration = max(0, bufferedDuration - oldest.duration)
+        pacing.completeAudio(duration: oldest.duration, at: elapsedSeconds)
+        timePitch.rate = pacing.rate
     }
 
     private func prepareIfNeeded(format: AVAudioFormat) throws {
@@ -247,7 +256,7 @@ public actor HeptapodAVAudioPlaybackSink:
             engine.attach(timePitch)
         }
 
-        timePitch.rate = requestedPlaybackRate
+        timePitch.rate = pacing.rate
         engine.connect(player, to: timePitch, format: format)
         engine.connect(timePitch, to: engine.mainMixerNode, format: format)
         engine.prepare()
