@@ -45,8 +45,29 @@ timestamped `/tmp/heptapod-live-benchmarks/...` directory, and generates a
 `report.md` with the same trace summary table format. Summary tables include
 audio RMS/peak columns so silent system-audio capture can be distinguished from
 VAD or ASR failures. Use `--preset matrix` for the six-case compact/quality and
-chunk-duration comparison, or pass custom cases with
-`--case label:asr:chunk_duration:max_buffered_segments`.
+chunk-duration comparison, `--preset asr` for the three-way compact/quality/
+nemotron comparison at identical 1.0 s chunk and 3-segment fallback settings,
+or pass custom cases with
+`--case label:asr:chunk_duration:max_buffered_segments`; custom cases accept
+`compact`, `quality`, or `nemotron`.
+When the demo binary is already built by XcodeBuildMCP, run the comparison
+without the runner's own Swift/Metal build steps:
+
+```bash
+Tools/run_live_benchmark.py \
+  --audio /path/to/fixture.wav \
+  --duration 20 \
+  --preset asr \
+  --mt apple \
+  --mt-postedit none \
+  --demo-binary .build/out/Products/Debug/HeptapodLiveSpeechDemo \
+  --skip-build \
+  --asr-stabilization \
+  --punctuation-endpoint
+```
+
+`--asr-stabilization` and `--punctuation-endpoint` apply identically to all
+three ASR backends and do not change model or backend defaults.
 Audio input can be WAV, M4A, MP3, or CAF if the local audio runtime can decode
 it.
 Use `--asr-stabilization` to force sliding-window stable-prefix ASR buffering in

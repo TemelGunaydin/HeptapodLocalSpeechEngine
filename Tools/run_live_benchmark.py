@@ -65,6 +65,12 @@ def default_cases(preset: str) -> list[BenchmarkCase]:
             BenchmarkCase("compact-1.0-b3", "compact", 1.0, 3),
             BenchmarkCase("quality-1.0-b3", "quality", 1.0, 3),
         ]
+    if preset == "asr":
+        return [
+            BenchmarkCase("compact-1.0-b3", "compact", 1.0, 3),
+            BenchmarkCase("quality-1.0-b3", "quality", 1.0, 3),
+            BenchmarkCase("nemotron-1.0-b3", "nemotron", 1.0, 3),
+        ]
     return [
         BenchmarkCase("compact-1.0-b3", "compact", 1.0, 3),
         BenchmarkCase("compact-1.2-b3", "compact", 1.2, 3),
@@ -87,8 +93,8 @@ def parse_case(value: str) -> BenchmarkCase:
     if not label:
         raise argparse.ArgumentTypeError("label must not be empty")
     asr = asr.lower()
-    if asr not in {"compact", "quality"}:
-        raise argparse.ArgumentTypeError("asr must be compact or quality")
+    if asr not in {"compact", "quality", "nemotron"}:
+        raise argparse.ArgumentTypeError("asr must be compact, quality, or nemotron")
 
     try:
         chunk_duration = float(raw_chunk)
@@ -839,9 +845,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--preset",
-        choices=["quick", "matrix"],
+        choices=["quick", "matrix", "asr"],
         default="quick",
-        help="Built-in benchmark case set. Ignored when --case is provided.",
+        help=(
+            "Built-in benchmark case set: quick (compact/quality), matrix "
+            "(compact/quality chunk sweep), or asr (compact/quality/nemotron at "
+            "identical settings). Ignored when --case is provided."
+        ),
     )
     parser.add_argument(
         "--case",

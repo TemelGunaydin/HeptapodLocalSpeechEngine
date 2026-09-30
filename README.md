@@ -728,8 +728,16 @@ Useful advanced metrics:
      (`aufklarer/Nemotron-3.5-ASR-Streaming-0.6B-CoreML-INT8`); no Python bridge.
    - Implements `HeptapodStreamingSpeechRecognizer`, so the live session consumes
      incremental hypotheses instead of re-running batch ASR windows.
-   - Remaining work: compare EN quality and latency against Qwen compact/quality
-     on the same WAV fixtures and record the benchmark under `Experiments/Results/`.
+   - EN benchmark vs Qwen compact/quality recorded in
+     `Experiments/Results/2026-09-30-nemotron-qwen-asr-en.md` (same synthetic WAV,
+     1.0 s chunks, 3-segment buffer, stabilization plus punctuation endpoints,
+     three-way run 2026-09-30). Nemotron had the lowest accepted-transcript
+     latency and the only growing partials (mean 0.142 s vs 0.222 s compact,
+     0.281 s quality); compact and nemotron matched all 37 reference words,
+     while the quality run's accepted transcript omitted `report before
+     Friday` (34/37) on this fixture.
+   - Remaining work: repeat with natural-speech fixtures and repeated runs
+     before drawing quality or speed conclusions.
 
 9. `NLLBTranslatorAdapter`
    - Add a translation quality alternative.
