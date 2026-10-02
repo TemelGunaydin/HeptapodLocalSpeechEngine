@@ -2582,6 +2582,184 @@ func streamingSessionEmitsPartialsAndStablePrefixResults() async throws {
     #expect(session.finishCount == 1)
 }
 
+@Test(arguments: [".", "?", "!", "。", "؟", "！"], [HeptapodLiveOutputMode.speech, .textOnly])
+func streamingSessionPreservesLateBoundaryBeforeNewWords(
+    punctuation: String,
+    outputMode: HeptapodLiveOutputMode
+) async throws {
+    let sentence = "Today we are testing local live translation"
+    let observation = try await observeStreamingPunctuation(
+        hypotheses: [
+            sentence,
+            sentence,
+            "\(sentence)\(punctuation) The weather",
+            "\(sentence)\(punctuation) The weather is",
+            "\(sentence)\(punctuation) The weather is warm"
+        ],
+        finalText: "\(sentence)\(punctuation) The weather is warm.",
+        outputMode: outputMode
+    )
+
+    #expect(observation.outputs.map(\.text) == ["\(sentence)\(punctuation)", "The weather is warm."])
+    #expect(observation.outputs.first?.index == 4)
+    if outputMode == .textOnly {
+        #expect(observation.transcripts.filter { $0.index == 4 }.map(\.text) == ["\(punctuation) The weather"])
+    }
+}
+
+@Test(arguments: [false, true])
+func streamingSessionPreservesLateBoundaryInFinalTail(endsWithSilence: Bool) async throws {
+    let sentence = "Today we are testing local live translation"
+    let observation = try await observeStreamingPunctuation(
+        hypotheses: [sentence, sentence],
+        finalText: "\(sentence). The weather is warm.",
+        endsWithSilence: endsWithSilence
+    )
+
+    #expect(observation.transcripts.map(\.text) == [sentence, ". The weather is warm."])
+    #expect(observation.outputs.map(\.text).joined(separator: " ") == "\(sentence). The weather is warm.")
+}
+
+@Test
+func streamingSessionPreservesLateBoundaryAfterLeadingCorrection() async throws {
+    let sentence = "Today we are testing local live translation"
+    let observation = try await observeStreamingPunctuation(
+        hypotheses: [
+            sentence,
+            sentence,
+            "Well \(sentence). The weather",
+            "Well \(sentence). The weather is warm"
+        ],
+        finalText: "Well \(sentence). The weather is warm."
+    )
+
+    // Leading corrections to already committed words are not re-emitted.
+    #expect(observation.transcripts.first { $0.index == 4 }?.text == ". The weather")
+    #expect(observation.outputs.map(\.text) == ["\(sentence).", "The weather is warm."])
+}
+
+@Test
+func streamingSessionDoesNotReplayAnAlreadyEmittedBoundary() async throws {
+    let sentence = "Today we are testing local live translation."
+    let observation = try await observeStreamingPunctuation(
+        hypotheses: [
+            sentence,
+            sentence,
+            "\(sentence) The weather",
+            "\(sentence) The weather is warm",
+            "\(sentence) The weather is warm"
+        ],
+        finalText: "\(sentence) The weather is warm."
+    )
+
+    #expect(observation.outputs.map(\.text) == [sentence, "The weather is warm."])
+    #expect(observation.transcripts.filter { $0.index == 4 }.map(\.text) == ["The weather"])
+}
+
+@Test
+func streamingSessionDoesNotEmitUnconfirmedBoundary() async throws {
+    let sentence = "Today we are testing local live translation"
+    let observation = try await observeStreamingPunctuation(
+        hypotheses: [
+            sentence,
+            sentence,
+            "\(sentence). The weather",
+            "\(sentence) The weather is warm",
+            "\(sentence) The weather is warm"
+        ],
+        finalText: "\(sentence) The weather is warm"
+    )
+
+    #expect(observation.transcripts.allSatisfy { $0.text.contains(".") == false })
+    #expect(observation.outputs.map(\.text) == ["\(sentence) The weather is warm"])
+}
+
+@Test
+func streamingSessionDoesNotMoveOlderBoundaryPastCommittedWords() async throws {
+    let sentence = "Today we are testing local live translation"
+    let observation = try await observeStreamingPunctuation(
+        hypotheses: [
+            sentence,
+            "\(sentence) The weather",
+            "\(sentence) The weather is",
+            "\(sentence). The weather is warm",
+            "\(sentence). The weather is warm"
+        ],
+        finalText: "\(sentence). The weather is warm"
+    )
+
+    // This append-only fix must not move an earlier sentence boundary to
+    // after "weather is"; revising already emitted internal text is separate.
+    #expect(observation.transcripts.allSatisfy { $0.text.contains(".") == false })
+    #expect(observation.outputs.map(\.text) == ["\(sentence) The weather is warm"])
+}
+
+private struct StreamingPunctuationObservation {
+    var transcripts: [(index: Int, text: String)] = []
+    var outputs: [(index: Int, text: String)] = []
+}
+
+private func observeStreamingPunctuation(
+    hypotheses: [String],
+    finalText: String,
+    outputMode: HeptapodLiveOutputMode = .textOnly,
+    endsWithSilence: Bool = false
+) async throws -> StreamingPunctuationObservation {
+    let recognitionSession = ScriptedStreamingRecognitionSession(
+        partialBatches: hypotheses.map { [$0] },
+        finalText: finalText
+    )
+    let pipeline = try HeptapodSpeechToSpeechPipeline(
+        configuration: HeptapodPipelineConfiguration(
+            speechRecognitionModelID: HeptapodModelDescriptor.qwenASRCompact.id,
+            textTranslationModelID: HeptapodModelDescriptor.madladTranslator.id,
+            speechSynthesisModelID: HeptapodModelDescriptor.kokoroTTS.id,
+            voiceActivityModelID: HeptapodModelDescriptor.sileroVAD.id
+        ),
+        vad: StubVoiceActivityDetector(),
+        recognizer: ScriptedStreamingRecognizer(sessions: [recognitionSession]),
+        translator: EchoTranslator(),
+        synthesizer: StubSynthesizer()
+    )
+    let session = HeptapodLiveSpeechSession(
+        pipeline: pipeline,
+        sourceLanguageCode: "en",
+        targetLanguageCode: "tr",
+        outputMode: outputMode
+    )
+    var chunks = hypotheses.map { _ in HeptapodAudioChunk(pcm16: Data([1, 0]), sampleRate: 16_000) }
+    if endsWithSilence {
+        chunks.append(HeptapodAudioChunk(pcm16: Data(), sampleRate: 16_000))
+    }
+    let events = await session.runSentenceBuffered(
+        chunks: HeptapodArrayAudioChunkSource(audioChunks: chunks).chunks(),
+        endpointing: HeptapodSentenceEndpointingConfiguration(
+            flushOnTerminalPunctuation: true,
+            maximumBufferedSegments: 64,
+            minimumWordsForPunctuationEndpoint: 6,
+            asrStabilization: HeptapodASRStabilizationConfiguration(
+                isEnabled: true,
+                maximumWindowChunks: 8,
+                minimumStableWords: 2
+            )
+        )
+    )
+    var observation = StreamingPunctuationObservation()
+    for try await event in events {
+        switch event {
+        case .transcript(let index, let transcript):
+            observation.transcripts.append((index, transcript.text))
+        case .translation(let index, let result):
+            observation.outputs.append((index, result.transcript.text))
+        case .result(let index, let result):
+            observation.outputs.append((index, result.transcript.text))
+        default:
+            break
+        }
+    }
+    return observation
+}
+
 @Test
 func streamingSessionCommitsTailFromFinalTranscript() async throws {
     let configuration = HeptapodPipelineConfiguration(

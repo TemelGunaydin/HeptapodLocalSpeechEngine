@@ -1549,22 +1549,23 @@ private struct SlidingASRStabilizer {
             committedWords,
             in: candidateWords
         ) {
+            // A stable boundary can arrive on the last committed word while
+            // new words are appended. Compare that matched span, excluding
+            // both leading corrections and the new suffix, then emit the
+            // boundary before the suffix without replaying committed words.
+            let matchedEnd = candidateWords.count - deltaWords.count
+            let matchedCommittedWords = Array(candidateWords.prefix(matchedEnd).suffix(committedWords.count))
             let punctuationDelta = Self.newTerminalPunctuation(
                 from: committedWords,
-                to: candidateWords
+                to: matchedCommittedWords
             )
             committedWords = candidateWords
-            if deltaWords.isEmpty {
-                return punctuationDelta.map {
-                    HeptapodTranscriptSegment(
-                        text: String($0),
-                        languageCode: languageCode,
-                        isFinal: true
-                    )
-                }
+            let outputWords = punctuationDelta.map { [String($0)] + deltaWords } ?? deltaWords
+            guard outputWords.isEmpty == false else {
+                return nil
             }
             return HeptapodTranscriptSegment(
-                text: deltaWords.joined(separator: " "),
+                text: outputWords.joined(separator: " "),
                 languageCode: languageCode,
                 isFinal: true
             )
