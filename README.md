@@ -468,6 +468,21 @@ while the next one is synthesized. Excess boundary silence is trimmed and each
 batch receives a short edge fade. Pass `--tts-one-shot` only for Chatterbox
 bridge debugging.
 
+MOSS keeps `fixed` sampling by default. To compare the existing runtime's
+alternative sampling paths explicitly:
+
+```bash
+Tools/run_live_translation.sh --tts moss --moss-sample-mode full
+```
+
+`--moss-sample-mode` accepts `fixed`, `full`, or `greedy` and only affects MOSS.
+The Swift adapter accepts `sampleMode: .full`; the factory accepts
+`mossSampleMode: .full`. This selects a runtime algorithm at worker startup,
+not a playback rate or an audio-trimming policy. Alternatives can change speech
+quality, duration, and inference cost; they are not a guaranteed fix for every
+generation-limit outlier. See the
+[same-fixture sampling investigation](Experiments/Results/2026-10-07-moss-sampling-en-tr.md).
+
 The neutral Chatterbox defaults are `0.5` exaggeration, `0.5` CFG weight, and
 `0.8` temperature. A reproducible four-preset Turkish listening matrix is
 available through `Tools/chatterbox_quality_matrix.py`; see

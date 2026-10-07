@@ -1,6 +1,14 @@
 import Foundation
 import HeptapodLocalSpeechEngine
 
+/// Sampling algorithms supported by the MOSS ONNX runtime.
+/// `fixed` preserves the bridge's existing default; alternatives are opt-in.
+public enum HeptapodMossTTSSampleMode: String, CaseIterable, Sendable {
+    case fixed
+    case full
+    case greedy
+}
+
 public actor HeptapodMossTTSNanoAdapter: HeptapodSpeechSynthesizer {
     public nonisolated let descriptor: HeptapodModelDescriptor
 
@@ -10,6 +18,7 @@ public actor HeptapodMossTTSNanoAdapter: HeptapodSpeechSynthesizer {
     private let defaultVoice: String
     private let modelDirectoryURL: URL?
     private let cpuThreads: Int
+    private let sampleMode: HeptapodMossTTSSampleMode
     private let timeoutSeconds: TimeInterval
     private let fileManager: FileManager
     private var worker: MossTTSNanoWorker?
@@ -22,6 +31,7 @@ public actor HeptapodMossTTSNanoAdapter: HeptapodSpeechSynthesizer {
         defaultVoice: String = "Ava",
         modelDirectoryURL: URL? = nil,
         cpuThreads: Int = 8,
+        sampleMode: HeptapodMossTTSSampleMode = .fixed,
         timeoutSeconds: TimeInterval = 600,
         fileManager: FileManager = .default
     ) {
@@ -34,6 +44,7 @@ public actor HeptapodMossTTSNanoAdapter: HeptapodSpeechSynthesizer {
         self.defaultVoice = defaultVoice
         self.modelDirectoryURL = modelDirectoryURL
         self.cpuThreads = max(1, cpuThreads)
+        self.sampleMode = sampleMode
         self.timeoutSeconds = timeoutSeconds
         self.fileManager = fileManager
     }
@@ -148,6 +159,7 @@ public actor HeptapodMossTTSNanoAdapter: HeptapodSpeechSynthesizer {
             defaultVoice: defaultVoice,
             modelDirectoryURL: modelDirectoryURL,
             cpuThreads: cpuThreads,
+            sampleMode: sampleMode,
             timeoutSeconds: timeoutSeconds,
             fileManager: fileManager
         )
@@ -249,6 +261,7 @@ private final class MossTTSNanoWorker {
         defaultVoice: String,
         modelDirectoryURL: URL?,
         cpuThreads: Int,
+        sampleMode: HeptapodMossTTSSampleMode,
         timeoutSeconds: TimeInterval,
         fileManager: FileManager
     ) throws {
@@ -271,7 +284,8 @@ private final class MossTTSNanoWorker {
             scriptURL.path,
             "--server",
             "--voice", defaultVoice,
-            "--cpu-threads", String(cpuThreads)
+            "--cpu-threads", String(cpuThreads),
+            "--sample-mode", sampleMode.rawValue
         ]
         if let modelDirectoryURL {
             arguments.append(contentsOf: ["--model-dir", modelDirectoryURL.path])

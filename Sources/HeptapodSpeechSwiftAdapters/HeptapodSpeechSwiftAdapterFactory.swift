@@ -63,6 +63,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         mossDefaultVoice: String = "Ava",
         mossModelDirectoryURL: URL? = nil,
         mossCPUThreads: Int = 8,
+        mossSampleMode: HeptapodMossTTSSampleMode = .fixed,
         offlineMode: Bool = false
     ) throws -> HeptapodSpeechToSpeechPipeline {
         try requireImplemented(configuration.speechRecognitionModelID, stage: .speechRecognition)
@@ -124,6 +125,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
                 mossDefaultVoice: mossDefaultVoice,
                 mossModelDirectoryURL: mossModelDirectoryURL,
                 mossCPUThreads: mossCPUThreads,
+                mossSampleMode: mossSampleMode,
                 offlineMode: offlineMode
             )
         )
@@ -203,6 +205,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         mossDefaultVoice: String,
         mossModelDirectoryURL: URL?,
         mossCPUThreads: Int,
+        mossSampleMode: HeptapodMossTTSSampleMode,
         offlineMode: Bool
     ) -> any HeptapodSpeechSynthesizer {
         switch modelID {
@@ -242,7 +245,8 @@ public enum HeptapodSpeechSwiftAdapterFactory {
                 voicePromptURL: mossVoicePromptURL,
                 defaultVoice: mossDefaultVoice,
                 modelDirectoryURL: mossModelDirectoryURL,
-                cpuThreads: mossCPUThreads
+                cpuThreads: mossCPUThreads,
+                sampleMode: mossSampleMode
             )
         default:
             HeptapodKokoroTTSAdapter(modelID: kokoroModelID, offlineMode: offlineMode)

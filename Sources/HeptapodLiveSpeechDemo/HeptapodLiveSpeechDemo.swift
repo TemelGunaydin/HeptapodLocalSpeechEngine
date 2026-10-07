@@ -133,7 +133,8 @@ struct HeptapodLiveSpeechDemo {
                 chatterboxMLXUsesPersistentWorker: options.usesChatterboxPersistentWorker,
                 mossPythonExecutable: options.ttsPythonExecutable,
                 mossScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
-                mossVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:))
+                mossVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:)),
+                mossSampleMode: options.mossSampleMode
             )
         }
 
@@ -159,6 +160,7 @@ struct HeptapodLiveSpeechDemo {
         MT:   \(options.mtDescriptor.displayName)
         MT post-edit: \(options.mtPostEditBackend.rawValue)
         TTS:  \(options.usesTextOnly ? "off" : options.ttsDescriptor.displayName)
+        MOSS sampling: \(options.ttsBackend == .moss && options.usesTextOnly == false ? options.mossSampleMode.rawValue : "not used")
         Flow: \(options.usesTextOnly ? "audio chunk source -> live session -> VAD -> ASR -> MT" : "audio chunk source -> live session -> VAD -> ASR -> MT -> TTS -> playback sink")
         Source: \(options.sourceDescription)
         Source language: \(sourceLanguageCode)
@@ -219,6 +221,9 @@ struct HeptapodLiveSpeechDemo {
           --tts-script <path> Python TTS bridge script override.
           --tts-python <name> Python executable for the selected Python TTS backend.
                               Uses the matching local venv for MOSS and Chatterbox MLX.
+          --moss-sample-mode <name>
+                              MOSS ONNX sampling: fixed, full, or greedy. Default: fixed.
+                              Alternatives change synthesis quality and throughput; opt-in only.
           --tts-device <name> Legacy PyTorch Chatterbox device: auto, cpu, mps, or cuda.
           --tts-voice-prompt <path>
                               Optional reference WAV for Chatterbox voice cloning.
@@ -742,6 +747,7 @@ private struct DemoOptions {
     let ttsBackend: DemoTTSBackend
     let ttsScriptPath: String?
     let ttsPythonExecutable: String
+    let mossSampleMode: HeptapodMossTTSSampleMode
     let ttsDevice: String?
     let ttsVoicePromptPath: String?
     let ttsExaggeration: Double
@@ -779,6 +785,7 @@ private struct DemoOptions {
         var ttsBackend: DemoTTSBackend?
         var ttsScriptPath: String?
         var ttsPythonExecutable: String?
+        var mossSampleMode = HeptapodMossTTSSampleMode.fixed
         var ttsDevice: String?
         var ttsVoicePromptPath: String?
         var ttsExaggeration = 0.5
@@ -880,6 +887,12 @@ private struct DemoOptions {
                 ttsScriptPath = try Self.value(after: argument, in: arguments, at: &index)
             case "--tts-python":
                 ttsPythonExecutable = try Self.value(after: argument, in: arguments, at: &index)
+            case "--moss-sample-mode":
+                let rawValue = try Self.value(after: argument, in: arguments, at: &index)
+                guard let mode = HeptapodMossTTSSampleMode(rawValue: rawValue.lowercased()) else {
+                    throw DemoError.invalidMossSampleMode(rawValue)
+                }
+                mossSampleMode = mode
             case "--tts-device":
                 let rawValue = try Self.value(after: argument, in: arguments, at: &index)
                 guard ["auto", "cpu", "mps", "cuda"].contains(rawValue) else {
@@ -956,6 +969,7 @@ private struct DemoOptions {
         self.ttsPythonExecutable = ttsPythonExecutable ?? Self.defaultTTSPythonExecutable(
             for: resolvedTTSBackend
         )
+        self.mossSampleMode = mossSampleMode
         self.ttsDevice = ttsDevice
         self.ttsVoicePromptPath = ttsVoicePromptPath
         self.ttsExaggeration = ttsExaggeration
@@ -1475,6 +1489,7 @@ private enum DemoError: LocalizedError {
     case invalidRangeOption(String, String, String)
     case invalidTTSBackend(String)
     case invalidTTSDevice(String)
+    case invalidMossSampleMode(String)
     case audioFileRequiresRealMode
     case liveAudioRequiresRealMode
     case missingValue(String)
@@ -1507,6 +1522,8 @@ private enum DemoError: LocalizedError {
             "Invalid TTS backend: \(value). Use moss, chatterbox-mlx, apple, kokoro, or chatterbox."
         case .invalidTTSDevice(let value):
             "Invalid TTS device: \(value). Use auto, cpu, mps, or cuda."
+        case .invalidMossSampleMode(let value):
+            "Invalid MOSS sample mode: \(value). Use fixed, full, or greedy."
         case .audioFileRequiresRealMode:
             "Audio file live mode requires --real."
         case .liveAudioRequiresRealMode:
