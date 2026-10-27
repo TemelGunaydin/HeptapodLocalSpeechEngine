@@ -389,6 +389,15 @@ not a continuous estimate of remaining wall-clock time. The summary shows
 show `n/a` for these fields. See the measured behavior and limitations in the
 [duration-aware playback comparison](Experiments/Results/2026-09-26-duration-aware-playback-en-tr.md).
 
+Output lifecycle events include a per-run `outputID`. The capture `index` can
+occur more than once when a chunk releases a completed sentence and a remaining
+tail; correlate translation, synthesis, and playback by `outputID`. Each output
+keeps its own monotonic stage timestamps until completion. First-audio and
+output latency start at `output_queued`, when the transcript is accepted for
+translation, including in text-only mode. These software timings do not measure
+physical speaker latency. Historical traces without `outputID` still require
+matching each index's occurrences in stage order.
+
 Repeatable system-audio smoke test:
 
 ```bash

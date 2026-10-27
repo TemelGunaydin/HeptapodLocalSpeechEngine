@@ -76,6 +76,13 @@ let package = Package(
                 "HeptapodLocalSpeechEngine",
                 "HeptapodSpeechSwiftAdapters"
             ]
+        ),
+        .testTarget(
+            name: "HeptapodLiveSpeechDemoTests",
+            dependencies: [
+                "HeptapodLocalSpeechEngine",
+                "HeptapodLiveSpeechDemo"
+            ]
         )
     ]
 )

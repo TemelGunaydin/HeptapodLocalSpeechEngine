@@ -471,7 +471,7 @@ struct HeptapodLiveSpeechDemo {
         }
     }
 
-    private static func runLiveSession(
+    static func runLiveSession(
         pipeline: HeptapodSpeechToSpeechPipeline,
         chunks: AsyncThrowingStream<HeptapodAudioChunk, Error>,
         sourceLanguageCode: String,
@@ -494,16 +494,7 @@ struct HeptapodLiveSpeechDemo {
             ? await session.runSentenceBuffered(chunks: chunks, endpointing: endpointing)
             : await session.run(chunks: chunks)
 
-        var segmentStartTimes: [Int: Date] = [:]
-        var transcriptTimes: [Int: Date] = [:]
-        var outputQueuedTimes: [Int: Date] = [:]
-        var translationStartTimes: [Int: Date] = [:]
-        var translationReadyTimes: [Int: [Date]] = [:]
-        var synthesisStartTimes: [Int: Date] = [:]
-        var firstAudioReadyTimes: [Int: Date] = [:]
-        var resultTimes: [Int: Date] = [:]
-        var playbackQueuedTimes: [Int: Date] = [:]
-        var playbackStartTimes: [Int: Date] = [:]
+        var timings = LiveEventTimings()
         let trace = try tracePath.map { try LiveTraceRecorder(path: $0) }
         try trace?.record(
             event: "run_started",
@@ -513,9 +504,9 @@ struct HeptapodLiveSpeechDemo {
         )
 
         for try await event in events {
+            let timing = timings.record(event)
             switch event {
             case .segmentStarted(let index):
-                segmentStartTimes[index] = Date()
                 print("Segment \(index)")
                 try trace?.record(event: "segment_started", index: index)
             case .audioLevel(let index, let level):
@@ -529,159 +520,124 @@ struct HeptapodLiveSpeechDemo {
                 print("  VAD: silence, skipped")
                 try trace?.record(event: "silence_skipped", index: index)
             case .partialTranscript(let index, let transcript):
-                let partialAt = Date()
-                let partialLatencySeconds = segmentStartTimes[index].map { partialAt.timeIntervalSince($0) }
                 try trace?.record(
                     event: "partial_transcript",
                     index: index,
                     transcriptText: transcript.text,
-                    resultLatencySeconds: partialLatencySeconds
+                    resultLatencySeconds: timing.resultLatencySeconds
                 )
             case .transcript(let index, let transcript):
                 printTranscript(transcript)
-                transcriptTimes[index] = Date()
-                let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
                 try trace?.record(
                     event: "transcript_ready",
                     index: index,
                     transcriptText: transcript.text,
-                    resultLatencySeconds: resultLatencySeconds
+                    resultLatencySeconds: timing.resultLatencySeconds
                 )
             case .outputQueued(let index, let backlog):
-                outputQueuedTimes[index] = Date()
                 try trace?.record(
                     event: "output_queued",
                     index: index,
+                    outputID: timing.outputID,
                     backlogSegments: backlog
                 )
             case .translationStarted(let index):
-                let startedAt = Date()
-                translationStartTimes[index] = startedAt
                 try trace?.record(
                     event: "translation_started",
                     index: index,
-                    queueWaitSeconds: outputQueuedTimes[index].map { startedAt.timeIntervalSince($0) }
+                    outputID: timing.outputID,
+                    queueWaitSeconds: timing.queueWaitSeconds
                 )
             case .translationCompleted(let index):
-                let completedAt = Date()
-                if outputMode == .speech {
-                    translationReadyTimes[index, default: []].append(completedAt)
-                }
                 try trace?.record(
                     event: "translation_completed",
                     index: index,
-                    stageDurationSeconds: translationStartTimes[index].map {
-                        completedAt.timeIntervalSince($0)
-                    }
+                    outputID: timing.outputID,
+                    stageDurationSeconds: timing.stageDurationSeconds
                 )
             case .synthesisStarted(let index):
-                let startedAt = Date()
-                synthesisStartTimes[index] = startedAt
-                var readyTimes = translationReadyTimes[index] ?? []
-                let translatedAt = readyTimes.isEmpty ? nil : readyTimes.removeFirst()
-                if readyTimes.isEmpty {
-                    translationReadyTimes.removeValue(forKey: index)
-                } else {
-                    translationReadyTimes[index] = readyTimes
-                }
                 try trace?.record(
                     event: "synthesis_started",
                     index: index,
-                    queueWaitSeconds: translatedAt.map { startedAt.timeIntervalSince($0) }
+                    outputID: timing.outputID,
+                    queueWaitSeconds: timing.queueWaitSeconds
                 )
             case .result(let index, let result):
                 printResult(result)
-                let readyAt = Date()
-                let resultLatencySeconds = segmentStartTimes[index].map { readyAt.timeIntervalSince($0) }
-                let outputLatencySeconds = transcriptTimes[index].map { readyAt.timeIntervalSince($0) }
-                if let startedAt = segmentStartTimes[index] {
-                    print("  Timing: result ready +\(String(format: "%.2f", readyAt.timeIntervalSince(startedAt)))s")
+                if let latency = timing.resultLatencySeconds {
+                    print("  Timing: result ready +\(String(format: "%.2f", latency))s")
                 }
-                if let transcriptAt = transcriptTimes[index] {
-                    print("  Timing: MT + TTS +\(String(format: "%.2f", readyAt.timeIntervalSince(transcriptAt)))s")
+                if let latency = timing.outputLatencySeconds {
+                    print("  Timing: MT + TTS +\(String(format: "%.2f", latency))s")
                 }
-                resultTimes[index] = readyAt
                 try trace?.record(
                     event: "result_ready",
                     index: index,
+                    outputID: timing.outputID,
                     transcriptText: result.transcript.text,
                     translationText: result.translation.translatedText,
                     speechBytes: result.speech.pcm16.count,
                     sampleRate: result.speech.sampleRate,
-                    resultLatencySeconds: resultLatencySeconds,
-                    outputLatencySeconds: outputLatencySeconds,
-                    stageDurationSeconds: synthesisStartTimes[index].map {
-                        readyAt.timeIntervalSince($0)
-                    }
+                    resultLatencySeconds: timing.resultLatencySeconds,
+                    outputLatencySeconds: timing.outputLatencySeconds,
+                    stageDurationSeconds: timing.stageDurationSeconds
                 )
                 if shouldSpeak {
                     speak(result.translation.translatedText)
                 }
             case .translation(let index, let result):
                 printTranslationResult(result)
-                let resultLatencySeconds = segmentStartTimes[index].map { Date().timeIntervalSince($0) }
-                let outputLatencySeconds = transcriptTimes[index].map { Date().timeIntervalSince($0) }
-                if let startedAt = segmentStartTimes[index] {
-                    print("  Timing: translation ready +\(String(format: "%.2f", Date().timeIntervalSince(startedAt)))s")
+                if let latency = timing.resultLatencySeconds {
+                    print("  Timing: translation ready +\(String(format: "%.2f", latency))s")
                 }
                 try trace?.record(
                     event: "translation_ready",
                     index: index,
+                    outputID: timing.outputID,
                     transcriptText: result.transcript.text,
                     translationText: result.translation.translatedText,
-                    resultLatencySeconds: resultLatencySeconds,
-                    outputLatencySeconds: outputLatencySeconds
+                    resultLatencySeconds: timing.resultLatencySeconds,
+                    outputLatencySeconds: timing.outputLatencySeconds
                 )
             case .synthesisAudioReady(let index):
-                let readyAt = Date()
-                firstAudioReadyTimes[index] = readyAt
-                let firstAudioLatencySeconds = transcriptTimes[index].map { readyAt.timeIntervalSince($0) }
-                if let firstAudioLatencySeconds {
+                if let firstAudioLatencySeconds = timing.firstAudioLatencySeconds {
                     print("  TTS: first audio +\(String(format: "%.2f", firstAudioLatencySeconds))s after ASR")
                 }
                 try trace?.record(
                     event: "tts_first_audio",
                     index: index,
-                    firstAudioLatencySeconds: firstAudioLatencySeconds,
-                    stageDurationSeconds: synthesisStartTimes[index].map {
-                        readyAt.timeIntervalSince($0)
-                    }
+                    outputID: timing.outputID,
+                    firstAudioLatencySeconds: timing.firstAudioLatencySeconds,
+                    stageDurationSeconds: timing.stageDurationSeconds
                 )
             case .playbackQueued(let index, let backlog):
-                playbackQueuedTimes[index] = Date()
                 try trace?.record(
                     event: "playback_queued",
                     index: index,
+                    outputID: timing.outputID,
                     backlogSegments: backlog
                 )
             case .playbackStarted(let index):
-                let startedAt = Date()
-                playbackStartTimes[index] = startedAt
-                let playbackLatencySeconds = resultTimes[index].map { startedAt.timeIntervalSince($0) }
-                let playbackReadyAt = firstAudioReadyTimes[index] ?? playbackQueuedTimes[index]
-                if let resultAt = resultTimes[index] {
-                    print("  Playback: started +\(String(format: "%.2f", startedAt.timeIntervalSince(resultAt)))s after result")
+                if let latency = timing.playbackLatencySeconds {
+                    print("  Playback: started +\(String(format: "%.2f", latency))s after result")
                 }
                 try trace?.record(
                     event: "playback_started",
                     index: index,
-                    playbackLatencySeconds: playbackLatencySeconds,
-                    queueWaitSeconds: playbackReadyAt.map {
-                        startedAt.timeIntervalSince($0)
-                    }
+                    outputID: timing.outputID,
+                    playbackLatencySeconds: timing.playbackLatencySeconds,
+                    queueWaitSeconds: timing.queueWaitSeconds
                 )
             case .playbackCompleted(let index):
-                let completedAt = Date()
-                let playbackLatencySeconds = resultTimes[index].map { completedAt.timeIntervalSince($0) }
-                let playbackDurationSeconds = playbackStartTimes[index].map { completedAt.timeIntervalSince($0) }
-                if let playbackStartedAt = playbackStartTimes[index] {
-                    print("  Playback: completed in \(String(format: "%.2f", completedAt.timeIntervalSince(playbackStartedAt)))s")
+                if let duration = timing.playbackDurationSeconds {
+                    print("  Playback: completed in \(String(format: "%.2f", duration))s")
                 }
                 try trace?.record(
                     event: "playback_completed",
                     index: index,
-                    playbackLatencySeconds: playbackLatencySeconds,
-                    playbackDurationSeconds: playbackDurationSeconds
+                    outputID: timing.outputID,
+                    playbackLatencySeconds: timing.playbackLatencySeconds,
+                    playbackDurationSeconds: timing.playbackDurationSeconds
                 )
             }
             if let trace, let trackingSink = playbackSink as? any HeptapodPlaybackAudioTracking {
@@ -1271,6 +1227,7 @@ private final class LiveTraceRecorder {
     func record(
         event: String,
         index: Int? = nil,
+        outputID: Int? = nil,
         sourceLanguageCode: String? = nil,
         targetLanguageCode: String? = nil,
         usesSentenceBuffering: Bool? = nil,
@@ -1296,6 +1253,7 @@ private final class LiveTraceRecorder {
             timestamp: dateFormatter.string(from: now),
             elapsedSeconds: now.timeIntervalSince(startedAt),
             index: index,
+            outputID: outputID,
             sourceLanguageCode: sourceLanguageCode,
             targetLanguageCode: targetLanguageCode,
             usesSentenceBuffering: usesSentenceBuffering,
@@ -1331,6 +1289,7 @@ private struct LiveTraceEvent: Encodable {
     let timestamp: String
     let elapsedSeconds: TimeInterval
     let index: Int?
+    let outputID: Int?
     let sourceLanguageCode: String?
     let targetLanguageCode: String?
     let usesSentenceBuffering: Bool?
