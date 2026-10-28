@@ -27,5 +27,6 @@ exec "$binary_path" \
     --real \
     --system-audio \
     --play-output \
+    --latency realtime \
     --trace "$trace_path" \
     "$@"

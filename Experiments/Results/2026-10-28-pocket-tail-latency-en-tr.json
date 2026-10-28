@@ -1,0 +1,187 @@
+{
+  "environment": {
+    "starting_head": "92acbb596d9f7f76cc121a2af872c183fdfe884e",
+    "hardware": "Apple M3 Max, 64 GiB",
+    "macos": "27.0.1",
+    "date": "2026-10-28",
+    "fixture": {
+      "source_seconds": 11.230375,
+      "source_sha256": "93a02fecee39e3a75d53f532e4d88c1d0b99de241015cd27ba6115de8e85b130",
+      "repeated_sha256": "3a2a80d7a8b24d83dbe83e83cd4599db2bad756e7ce569d8ca83ea1e4b0755b5",
+      "rate": 16000,
+      "channels": 1,
+      "width": 2
+    },
+    "model_id": "wite-tech/pocket-tts-turkish",
+    "model_revision": "fcbd37c74dc127be846face0ff36062e9a939f7b",
+    "runtime_git_revision": "88df358df6b57fb6bddaa82ac7d2d856521b7a20",
+    "pocket_tts": "3.3.0",
+    "torch": "2.15.0",
+    "numpy": "2.4.6",
+    "raw_artifacts": "/private/tmp/heptapod-live-20261028.bq52d7pb"
+  },
+  "settings": {
+    "input_seconds": 60,
+    "capture_seconds": 1,
+    "maximum_buffered_stable_asr_updates": 16,
+    "asr": "nemotron",
+    "mt": "apple",
+    "mt_postedit": "none",
+    "tts": "pocket",
+    "voice": "female_2",
+    "playback_ceiling": 1.15,
+    "actual_speaker_playback": true,
+    "tail_threshold_pcm16": 8,
+    "tail_guard_seconds": 0.15,
+    "maximum_held_tail_seconds": 0.5
+  },
+  "runs": {
+    "pocket-final": {
+      "finished": true,
+      "outputs": 20,
+      "completed_playbacks": 20,
+      "elapsed_seconds": 68.08583498001099,
+      "tail_seconds": 8.085834980010986,
+      "pcm_seconds": 61.11,
+      "accepted_to_first_pcm_seconds": {
+        "mean": 1.3985585629940034,
+        "median": 0.6380650401115417,
+        "p95": 4.241870999336243,
+        "max": 4.8731759786605835
+      },
+      "accepted_to_playback_dispatch_seconds": {
+        "mean": 3.7963242053985597,
+        "median": 3.962323546409607,
+        "p95": 6.7174259424209595,
+        "max": 8.050716996192932
+      },
+      "first_playback_dispatch_seconds": 2.3380839824676514,
+      "peak_output_queue": 2,
+      "peak_playback_queue": 2,
+      "peak_pending_pcm_seconds": 8.000000000000005,
+      "peak_playback_rate": 1.15,
+      "reference_words": 185,
+      "transcript_words": 185,
+      "asr_word_edits": 3,
+      "transcripts_and_translations_identical_to_baseline": true,
+      "ordered_output_and_playback_ids": true,
+      "wav_bytes_match_result_events": true,
+      "pending_pcm_at_completion": 0
+    },
+    "pocket-tail": {
+      "finished": true,
+      "outputs": 20,
+      "completed_playbacks": 20,
+      "elapsed_seconds": 65.68857204914093,
+      "tail_seconds": 5.68857204914093,
+      "pcm_seconds": 57.08441666666667,
+      "accepted_to_first_pcm_seconds": {
+        "mean": 0.6533582091331482,
+        "median": 0.08458703756332397,
+        "p95": 2.3863580226898193,
+        "max": 2.9001290798187256
+      },
+      "accepted_to_playback_dispatch_seconds": {
+        "mean": 2.6940374970436096,
+        "median": 2.7635889649391174,
+        "p95": 5.399288892745972,
+        "max": 6.1000189781188965
+      },
+      "first_playback_dispatch_seconds": 2.341307044029236,
+      "peak_output_queue": 1,
+      "peak_playback_queue": 2,
+      "peak_pending_pcm_seconds": 7.51904166666667,
+      "peak_playback_rate": 1.15,
+      "reference_words": 185,
+      "transcript_words": 185,
+      "asr_word_edits": 3,
+      "transcripts_and_translations_identical_to_baseline": true,
+      "ordered_output_and_playback_ids": true,
+      "wav_bytes_match_result_events": true,
+      "pending_pcm_at_completion": 0
+    },
+    "pocket-tail-pace": {
+      "finished": true,
+      "outputs": 20,
+      "completed_playbacks": 20,
+      "elapsed_seconds": 64.56368792057037,
+      "tail_seconds": 4.5636879205703735,
+      "pcm_seconds": 57.08441666666667,
+      "accepted_to_first_pcm_seconds": {
+        "mean": 0.5229779005050659,
+        "median": 0.08507853746414185,
+        "p95": 1.8591349124908447,
+        "max": 2.194562077522278
+      },
+      "accepted_to_playback_dispatch_seconds": {
+        "mean": 2.330600255727768,
+        "median": 2.232226550579071,
+        "p95": 4.973847985267639,
+        "max": 5.32608699798584
+      },
+      "first_playback_dispatch_seconds": 2.342152953147888,
+      "peak_output_queue": 1,
+      "peak_playback_queue": 2,
+      "peak_pending_pcm_seconds": 6.559041666666666,
+      "peak_playback_rate": 1.15,
+      "reference_words": 185,
+      "transcript_words": 185,
+      "asr_word_edits": 3,
+      "transcripts_and_translations_identical_to_baseline": true,
+      "ordered_output_and_playback_ids": true,
+      "wav_bytes_match_result_events": true,
+      "pending_pcm_at_completion": 0
+    }
+  },
+  "tail_reduction_seconds": 3.522147059440613,
+  "tail_reduction_percent": 43.559472437264944,
+  "baseline_pcm_filter_proof": {
+    "files": 20,
+    "retained_pcm_is_exact_prefix": true,
+    "removed_seconds": 4.071666666666667,
+    "removed_peak_pcm16": 4
+  },
+  "paired_model_stream_proofs": [
+    {
+      "voice": "female_2",
+      "text": "Lütfen raporu Cuma gününden önce gönderin ve ofise vardığınızda beni arayın.",
+      "exact_prefix": true,
+      "before_seconds": 4.32,
+      "after_seconds": 4.148916666666667,
+      "removed_peak_pcm16": 3
+    },
+    {
+      "voice": "female_2",
+      "text": "Randevunuz 15.10.2026 saat 14:30’da. Ücret 1.250 TL.",
+      "exact_prefix": true,
+      "before_seconds": 6.55,
+      "after_seconds": 6.4165833333333335,
+      "removed_peak_pcm16": 4
+    },
+    {
+      "voice": "male_1",
+      "text": "Lütfen raporu Cuma gününden önce gönderin ve ofise vardığınızda beni arayın.",
+      "exact_prefix": true,
+      "before_seconds": 4.16,
+      "after_seconds": 4.1515,
+      "removed_peak_pcm16": 3
+    },
+    {
+      "voice": "male_1",
+      "text": "Randevunuz 15.10.2026 saat 14:30’da. Ücret 1.250 TL.",
+      "exact_prefix": true,
+      "before_seconds": 6.31,
+      "after_seconds": 6.31,
+      "removed_peak_pcm16": 0
+    }
+  ],
+  "validation": {
+    "swift_tests": 120,
+    "python_tooling_tests": 45
+  },
+  "limitations": [
+    "One repeated synthetic English fixture; broader conversational quality and latency are not established.",
+    "Timing is software dispatch/completion, not an acoustic measurement.",
+    "Independent model renders can differ slightly; PCM preservation uses the same generated audio on both sides."
+  ]
+}

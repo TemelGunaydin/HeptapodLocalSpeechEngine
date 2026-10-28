@@ -42,6 +42,29 @@ struct HeptapodPlaybackPacingTests {
         #expect(pacing.rate == 1)
     }
 
+    @Test
+    func catchUpPaceDoesNotBrakeBetweenAlreadyQueuedUtterances() {
+        var pacing = HeptapodPlaybackPacing()
+        pacing.setBacklog(2, at: 0)
+        pacing.enqueueAudio(duration: 8, at: 0)
+        for second in 1...3 { pacing.setBacklog(2, at: Double(second)) }
+        let catchUpRate = pacing.rate
+        #expect(abs(catchUpRate - 1.15) < 0.0001)
+
+        // The next queued utterance is short. A low PCM count does not mean
+        // playback has caught up with accepted speech that is still queued.
+        pacing.completeAudio(duration: 6.5, at: 4)
+        pacing.setBacklog(2, at: 5)
+        #expect(pacing.rate == catchUpRate)
+
+        // Once only the final utterance remains, ease back to natural pace.
+        pacing.setBacklog(1, at: 5.5)
+        #expect(pacing.rate < catchUpRate)
+        #expect(pacing.rate > 1)
+        pacing.setBacklog(1, at: 7)
+        #expect(abs(pacing.rate - 1) < 0.0001)
+    }
+
     @Test(arguments: [Float(1), 1.15, 1.35])
     func honorsConfiguredCeiling(maximumRate: Float) {
         var pacing = HeptapodPlaybackPacing(maximumRate: maximumRate)

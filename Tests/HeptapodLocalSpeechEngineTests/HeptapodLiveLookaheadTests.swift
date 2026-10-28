@@ -5,6 +5,72 @@ import Testing
 @Suite(.timeLimit(.minutes(1)))
 struct HeptapodLiveLookaheadTests {
     @Test
+    func continuousPlaybackSchedulesNextUtteranceBeforeCompletionAndStillDrains() async throws {
+        let sink = ContinuousLookaheadSink()
+        let session = try makeSession(
+            translator: LookaheadTranslator(), synthesizer: LookaheadSynthesizer(), sink: sink
+        )
+        let events = await session.runSentenceBuffered(chunks: source(["first", "second", "third"]).chunks())
+        let consumer = Task {
+            var completed: [Int] = []
+            for try await event in events {
+                if case .playbackCompleted(let index) = event { completed.append(index) }
+                if case .playbackQueued(_, let backlog) = event { #expect(backlog <= 2) }
+            }
+            return completed
+        }
+        defer { consumer.cancel(); sink.firstRelease.open(); sink.secondRelease.open() }
+        try await sink.secondScheduled.wait()
+        #expect(await sink.recordedAudio() == [Data("first".utf8), Data("second".utf8)])
+        #expect(await sink.completedCount() == 0)
+        sink.firstRelease.open()
+        try await sink.thirdScheduled.wait()
+        #expect(await sink.completedCount() == 1)
+        sink.secondRelease.open()
+        #expect(try await consumer.value == [2, 4, 6])
+        #expect(await sink.recordedAudio() == ["first", "second", "third"].map { Data($0.utf8) })
+        #expect(await sink.completedCount() == 3)
+    }
+
+    @Test
+    func continuousPlaybackCancellationReleasesBothPendingUtterances() async throws {
+        let sink = ContinuousLookaheadSink()
+        let session = try makeSession(
+            translator: LookaheadTranslator(), synthesizer: LookaheadSynthesizer(), sink: sink
+        )
+        let events = await session.runSentenceBuffered(chunks: source(["first", "second", "third"]).chunks())
+        let consumer = Task { for try await _ in events {} }
+        defer { consumer.cancel(); sink.firstRelease.open(); sink.secondRelease.open() }
+        try await sink.secondScheduled.wait()
+        consumer.cancel()
+        _ = await consumer.result
+        try await sink.cancelled.wait()
+        #expect(await sink.recordedAudio().count == 2)
+        #expect(await sink.completedCount() == 0)
+    }
+
+    @Test
+    func continuousPlaybackFailureAfterSchedulingStopsFollowingWork() async throws {
+        let sink = ContinuousLookaheadSink(failFirst: true)
+        let session = try makeSession(
+            translator: LookaheadTranslator(), synthesizer: LookaheadSynthesizer(), sink: sink
+        )
+        let events = await session.runSentenceBuffered(chunks: source(["first", "second", "third"]).chunks())
+        let consumer = Task {
+            _ = await #expect(throws: LookaheadFailure.playback) {
+                for try await _ in events {}
+            }
+        }
+        defer { consumer.cancel(); sink.firstRelease.open(); sink.secondRelease.open() }
+        try await sink.secondScheduled.wait()
+        sink.firstRelease.open()
+        await consumer.value
+        try await sink.cancelled.wait()
+        #expect(await sink.recordedAudio().count == 2)
+        #expect(await sink.completedCount() == 0)
+    }
+
+    @Test
     func translatesNextSegmentWhileFirstSynthesisWaits() async throws {
         let synthesisGate = LookaheadGate()
         let translator = LookaheadTranslator()
@@ -211,6 +277,60 @@ private struct LookaheadGate: Sendable {
 private enum LookaheadFailure: Error, Equatable {
     case translation
     case synthesis
+    case playback
+}
+
+private actor ContinuousLookaheadSink: HeptapodContinuousSpeechPlaybackSink, HeptapodCancellableSpeechPlaybackSink {
+    nonisolated let firstRelease = LookaheadGate()
+    nonisolated let secondRelease = LookaheadGate()
+    nonisolated let secondScheduled = LookaheadGate()
+    nonisolated let thirdScheduled = LookaheadGate()
+    nonisolated let cancelled = LookaheadGate()
+    private let failFirst: Bool
+    private var audio: [Data] = []
+    private var completed = 0
+
+    init(failFirst: Bool = false) { self.failFirst = failFirst }
+
+    func play(_ speech: HeptapodSynthesizedSpeech) async throws {
+        Issue.record("Continuous sink must receive a stream")
+    }
+
+    func play(_ stream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>) async throws {
+        Issue.record("Queue must use scheduling notification for a continuous sink")
+        firstRelease.open()
+        secondRelease.open()
+        try await play(stream, onScheduled: {})
+    }
+
+    func play(
+        _ stream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>,
+        onScheduled: @escaping @Sendable () async -> Void
+    ) async throws {
+        var bytes = Data()
+        for try await chunk in stream { bytes.append(chunk.pcm16) }
+        try Task.checkCancellation()
+        audio.append(bytes)
+        let index = audio.count
+        await onScheduled()
+        if index == 2 { secondScheduled.open() }
+        if index == 3 { thirdScheduled.open() }
+        if index == 1 {
+            try await firstRelease.wait()
+            if failFirst { throw LookaheadFailure.playback }
+        } else {
+            try await secondRelease.wait()
+        }
+        try Task.checkCancellation()
+        completed += 1
+    }
+
+    func cancelPlayback() async {
+        cancelled.open()
+    }
+
+    func recordedAudio() -> [Data] { audio }
+    func completedCount() -> Int { completed }
 }
 
 private actor LookaheadPlaybackSink: HeptapodSpeechPlaybackSink {

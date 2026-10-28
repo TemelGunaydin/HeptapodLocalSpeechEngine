@@ -1,0 +1,187 @@
+{
+  "baseline": {
+    "events": {
+      "run_started": 1,
+      "segment_started": 60,
+      "audio_level": 60,
+      "partial_transcript": 170,
+      "transcript_ready": 41,
+      "output_queued": 41,
+      "translation_started": 41,
+      "translation_completed": 41,
+      "synthesis_started": 41,
+      "playback_queued": 41,
+      "tts_first_audio": 41,
+      "playback_state": 163,
+      "playback_started": 41,
+      "result_ready": 41,
+      "playback_completed": 41,
+      "silence_skipped": 3,
+      "run_finished": 1
+    },
+    "finished": true,
+    "elapsed": 115.9527690410614,
+    "wer_edits": 3,
+    "reference_words": 185,
+    "transcript_words": 185,
+    "accepted_to_first_pcm": {
+      "mean": 25.280657968870024,
+      "median": 24.55761694908142,
+      "p95": 48.29654109477997,
+      "max": 51.513501048088074
+    },
+    "accepted_to_playback_start": {
+      "mean": 27.88209970113708,
+      "median": 27.286301016807556,
+      "p95": 51.162492990493774,
+      "max": 54.81235206127167
+    },
+    "first_playback": 2.670841097831726,
+    "pcm_seconds": 103.36,
+    "output_ids_ordered": true
+  },
+  "pocket-realtime": {
+    "events": {
+      "run_started": 1,
+      "segment_started": 188,
+      "audio_level": 188,
+      "partial_transcript": 128,
+      "transcript_ready": 16,
+      "output_queued": 16,
+      "translation_started": 16,
+      "translation_completed": 16,
+      "synthesis_started": 16,
+      "playback_queued": 16,
+      "tts_first_audio": 16,
+      "playback_state": 63,
+      "playback_started": 16,
+      "result_ready": 16,
+      "playback_completed": 16,
+      "silence_skipped": 17,
+      "run_finished": 1
+    },
+    "finished": true,
+    "elapsed": 64.26957702636719,
+    "wer_edits": 35,
+    "reference_words": 185,
+    "transcript_words": 161,
+    "accepted_to_first_pcm": {
+      "mean": 0.3120095655322075,
+      "median": 0.10809999704360962,
+      "p95": 1.2010799646377563,
+      "max": 1.2010799646377563
+    },
+    "accepted_to_playback_start": {
+      "mean": 2.0068783164024353,
+      "median": 2.0796375274658203,
+      "p95": 4.414723992347717,
+      "max": 4.414723992347717
+    },
+    "first_playback": 1.4394869804382324,
+    "pcm_seconds": 50.08,
+    "output_ids_ordered": true
+  },
+  "pocket-realtime-1s": {
+    "events": {
+      "run_started": 1,
+      "segment_started": 60,
+      "audio_level": 60,
+      "partial_transcript": 170,
+      "transcript_ready": 24,
+      "output_queued": 24,
+      "translation_started": 24,
+      "translation_completed": 24,
+      "synthesis_started": 24,
+      "playback_queued": 24,
+      "tts_first_audio": 24,
+      "playback_state": 95,
+      "playback_started": 24,
+      "result_ready": 24,
+      "playback_completed": 24,
+      "silence_skipped": 3,
+      "run_finished": 1
+    },
+    "finished": true,
+    "elapsed": 70.84929597377777,
+    "wer_edits": 3,
+    "reference_words": 185,
+    "transcript_words": 185,
+    "accepted_to_first_pcm": {
+      "mean": 2.856011946996053,
+      "median": 2.249603509902954,
+      "p95": 7.182675004005432,
+      "max": 8.188856959342957
+    },
+    "accepted_to_playback_start": {
+      "mean": 5.269022325674693,
+      "median": 5.5394880175590515,
+      "p95": 9.936792016029358,
+      "max": 11.106441974639893
+    },
+    "first_playback": 2.239282965660095,
+    "pcm_seconds": 62.95,
+    "output_ids_ordered": true
+  },
+  "pocket-final": {
+    "events": {
+      "run_started": 1,
+      "segment_started": 60,
+      "audio_level": 60,
+      "partial_transcript": 170,
+      "transcript_ready": 20,
+      "output_queued": 20,
+      "translation_started": 20,
+      "translation_completed": 20,
+      "synthesis_started": 20,
+      "playback_queued": 20,
+      "tts_first_audio": 20,
+      "playback_state": 79,
+      "playback_started": 20,
+      "result_ready": 20,
+      "playback_completed": 20,
+      "silence_skipped": 3,
+      "run_finished": 1
+    },
+    "finished": true,
+    "elapsed": 68.08583498001099,
+    "wer_edits": 3,
+    "reference_words": 185,
+    "transcript_words": 185,
+    "accepted_to_first_pcm": {
+      "mean": 1.3985585629940034,
+      "median": 0.6380650401115417,
+      "p95": 4.241870999336243,
+      "max": 4.8731759786605835
+    },
+    "accepted_to_playback_start": {
+      "mean": 3.7963242053985597,
+      "median": 3.962323546409607,
+      "p95": 6.7174259424209595,
+      "max": 8.050716996192932
+    },
+    "first_playback": 2.3380839824676514,
+    "pcm_seconds": 61.11,
+    "output_ids_ordered": true
+  },
+  "environment": {
+    "starting_head": "92acbb596d9f7f76cc121a2af872c183fdfe884e",
+    "hardware": "Apple M3 Max, 64 GiB",
+    "macos": "27.0.1",
+    "date": "2026-10-28",
+    "fixture": {
+      "source_seconds": 11.230375,
+      "source_sha256": "93a02fecee39e3a75d53f532e4d88c1d0b99de241015cd27ba6115de8e85b130",
+      "repeated_sha256": "3a2a80d7a8b24d83dbe83e83cd4599db2bad756e7ce569d8ca83ea1e4b0755b5",
+      "rate": 16000,
+      "channels": 1,
+      "width": 2
+    },
+    "model_id": "wite-tech/pocket-tts-turkish",
+    "model_revision": "fcbd37c74dc127be846face0ff36062e9a939f7b",
+    "runtime_git_revision": "88df358df6b57fb6bddaa82ac7d2d856521b7a20",
+    "pocket_tts": "3.3.0",
+    "torch": "2.15.0",
+    "numpy": "2.4.6",
+    "raw_artifacts": "/private/tmp/heptapod-live-20261028.bq52d7pb"
+  }
+}

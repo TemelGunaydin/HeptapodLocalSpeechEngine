@@ -89,7 +89,7 @@ class RunLiveTranslationTests(unittest.TestCase):
                 self.assertEqual(
                     arguments,
                     [
-                        "--real", "--system-audio", "--play-output", "--trace",
+                        "--real", "--system-audio", "--play-output", "--latency", "realtime", "--trace",
                         self.environment["HEPTAPOD_TRACE_PATH"], "--help", "--to", "tr",
                     ],
                 )

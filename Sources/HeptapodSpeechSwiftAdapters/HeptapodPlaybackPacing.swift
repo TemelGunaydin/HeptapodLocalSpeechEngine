@@ -71,7 +71,13 @@ struct HeptapodPlaybackPacing: Sendable {
         } else {
             increase = Float(min(3, max(0, segmentCount - 1))) * 0.05
         }
-        let target = min(maximumRate, baseRate + increase)
+        var target = min(maximumRate, baseRate + increase)
+        if isTrackingAudio, segmentCount > 1 {
+            // A short queued utterance can briefly lower the PCM total while
+            // playback is still behind. Keep the catch-up pace already reached
+            // until that queue drains, instead of braking at every sentence.
+            target = max(target, rate)
+        }
         if segmentCount == 0, pendingDuration == 0 {
             rate = baseRate
         } else {

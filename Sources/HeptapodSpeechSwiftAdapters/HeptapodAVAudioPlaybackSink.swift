@@ -3,12 +3,13 @@ import Foundation
 import HeptapodLocalSpeechEngine
 
 public actor HeptapodAVAudioPlaybackSink:
-    HeptapodStreamingSpeechPlaybackSink,
+    HeptapodContinuousSpeechPlaybackSink,
     HeptapodCancellableSpeechPlaybackSink,
     HeptapodPlaybackBacklogAware,
     HeptapodPlaybackAudioTracking
 {
     private struct ScheduledBuffer {
+        let id = UUID()
         let duration: TimeInterval
         let completion: Task<Void, Never>
     }
@@ -63,11 +64,19 @@ public actor HeptapodAVAudioPlaybackSink:
     public func play(
         _ speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
     ) async throws {
+        try await play(speechStream, onScheduled: {})
+    }
+
+    public func play(
+        _ speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>,
+        onScheduled: @escaping @Sendable () async -> Void
+    ) async throws {
         let generation = playbackGeneration
         var bufferedDuration: TimeInterval = 0
         var didStartPlayback = false
         var didScheduleAudio = false
         var streamSampleRate: Int?
+        var lastBuffer: ScheduledBuffer?
 
         do {
             for try await speech in speechStream {
@@ -84,6 +93,14 @@ public actor HeptapodAVAudioPlaybackSink:
                 }
                 streamSampleRate = speech.sampleRate
 
+                // A graph format change stops the player. Drain the preceding
+                // utterance before reconfiguring, so its final samples survive.
+                if playbackSampleRate != Double(speech.sampleRate) {
+                    while scheduledBuffers.isEmpty == false {
+                        try await waitForOldestBuffer(generation: generation)
+                    }
+                }
+
                 // Bound scheduling even when a batch TTS provider yields one
                 // long waveform; completions also keep the pacing loop moving.
                 for chunk in HeptapodSpeechSwiftAudioSamples.playbackChunks(from: speech) {
@@ -96,6 +113,7 @@ public actor HeptapodAVAudioPlaybackSink:
                         completion: scheduled.completion
                     )
                     scheduledBuffers.append(scheduledBuffer)
+                    lastBuffer = scheduledBuffer
                     self.bufferedDuration += scheduled.duration
                     bufferedDuration += scheduled.duration
                     if didStartPlayback == false, bufferedDuration >= startupBufferDuration {
@@ -120,8 +138,9 @@ public actor HeptapodAVAudioPlaybackSink:
             if didStartPlayback == false {
                 player.play()
             }
-            while scheduledBuffers.isEmpty == false {
-                try await waitForOldestBuffer(generation: generation)
+            await onScheduled()
+            if let lastBuffer {
+                try await waitForBuffer(lastBuffer, generation: generation)
             }
         } catch {
             if playbackGeneration == generation {
@@ -213,23 +232,29 @@ public actor HeptapodAVAudioPlaybackSink:
         guard let oldest = scheduledBuffers.first else {
             return
         }
+        try await waitForBuffer(oldest, generation: generation)
+    }
 
+    private func waitForBuffer(_ buffer: ScheduledBuffer, generation: Int) async throws {
         try await withTaskCancellationHandler(operation: {
-            await oldest.completion.value
+            await buffer.completion.value
             try Task.checkCancellation()
         }, onCancel: {
-            oldest.completion.cancel()
+            buffer.completion.cancel()
         })
 
         guard playbackGeneration == generation else {
             throw CancellationError()
         }
-        guard scheduledBuffers.isEmpty == false else {
+        // The previous utterance's drain and the next one's bounded scheduler
+        // can await the same buffer. Retire it exactly once, by identity.
+        guard let index = scheduledBuffers.firstIndex(where: { $0.id == buffer.id }) else {
             return
         }
-        scheduledBuffers.removeFirst()
-        bufferedDuration = max(0, bufferedDuration - oldest.duration)
-        pacing.completeAudio(duration: oldest.duration, at: elapsedSeconds)
+        let duration = scheduledBuffers[...index].reduce(0) { $0 + $1.duration }
+        scheduledBuffers.removeFirst(index + 1)
+        bufferedDuration = max(0, bufferedDuration - duration)
+        pacing.completeAudio(duration: duration, at: elapsedSeconds)
         timePitch.rate = pacing.rate
     }
 

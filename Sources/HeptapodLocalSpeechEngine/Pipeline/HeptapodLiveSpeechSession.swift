@@ -14,6 +14,17 @@ public protocol HeptapodStreamingSpeechPlaybackSink: HeptapodSpeechPlaybackSink 
     ) async throws
 }
 
+/// Allows the next utterance to be scheduled before this one finishes playing.
+/// Call `onScheduled` once all its PCM is queued, retaining bounded buffering.
+/// Return only after this utterance actually finishes playback. Callers serialize
+/// scheduling through the callback; playback completion may overlap scheduling.
+public protocol HeptapodContinuousSpeechPlaybackSink: HeptapodStreamingSpeechPlaybackSink {
+    func play(
+        _ speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>,
+        onScheduled: @escaping @Sendable () async -> Void
+    ) async throws
+}
+
 public protocol HeptapodCancellableSpeechPlaybackSink: HeptapodSpeechPlaybackSink {
     func cancelPlayback() async
 }
@@ -295,7 +306,10 @@ public actor HeptapodLiveSpeechSession {
                 }
             }
 
-            continuation.onTermination = { _ in
+            continuation.onTermination = { termination in
+                // A successful drain is not cancellation. Preserve completed
+                // playback state for consumers processing the final events.
+                if case .finished(nil) = termination { return }
                 task.cancel()
                 Task {
                     await playbackQueue.cancel()
@@ -575,7 +589,8 @@ public actor HeptapodLiveSpeechSession {
                 }
             }
 
-            continuation.onTermination = { _ in
+            continuation.onTermination = { termination in
+                if case .finished(nil) = termination { return }
                 task.cancel()
                 Task {
                     await synthesisQueue.cancel()
@@ -2066,6 +2081,7 @@ private actor LivePlaybackQueue {
     private let continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
     private let maximumPendingSegments: Int
     private var tasks: [Task<Void, Error>] = []
+    private var schedulingTail: AsyncStream<Void>?
     private var activeRelays: [LiveSpeechStreamRelay] = []
     private var queuedSegmentCount = 0
     private var isCancelled = false
@@ -2115,9 +2131,17 @@ private actor LivePlaybackQueue {
         queuedSegmentCount += 1
         continuation.yield(.playbackQueued(index: index, backlog: queuedSegmentCount))
         let previous = tasks.last
+        let previousScheduling = schedulingTail
+        let scheduled = AsyncStream<Void>.makeStream()
+        schedulingTail = scheduled.stream
         let task = Task { [self] in
+            // Also unblock the following task on failure or cancellation; its
+            // health check prevents scheduling after a failed predecessor.
+            defer { scheduled.continuation.finish() }
             do {
-                try await previous?.value
+                if let previousScheduling {
+                    for await _ in previousScheduling {}
+                }
                 try Task.checkCancellation()
                 try checkHealthy()
                 if let streamingSink = sink as? any HeptapodStreamingSpeechPlaybackSink {
@@ -2125,7 +2149,8 @@ private actor LivePlaybackQueue {
                         index: index,
                         speechStream: speechStream,
                         sink: streamingSink,
-                        continuation: continuation
+                        continuation: continuation,
+                        onScheduled: { scheduled.continuation.finish() }
                     )
                 } else {
                     let speech = try await collectSpeech(from: speechStream)
@@ -2134,6 +2159,9 @@ private actor LivePlaybackQueue {
                     continuation.yield(.playbackStarted(index: index))
                     try await sink.play(speech)
                 }
+                // Preserve completion-event order even if device callbacks
+                // from adjacent utterances resume their tasks out of order.
+                try await previous?.value
                 try Task.checkCancellation()
                 try checkHealthy()
                 continuation.yield(.playbackCompleted(index: index))
@@ -2233,6 +2261,7 @@ private actor LivePlaybackQueue {
             relay.finish(throwing: CancellationError())
         }
         tasks.removeAll()
+        schedulingTail = nil
         activeRelays.removeAll()
         queuedSegmentCount = 0
 
@@ -2341,12 +2370,17 @@ private func playStreamingSpeech(
     index: Int,
     speechStream: HeptapodLiveSpeechStream,
     sink: any HeptapodStreamingSpeechPlaybackSink,
-    continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation
+    continuation: AsyncThrowingStream<HeptapodLiveSpeechEvent, Error>.Continuation,
+    onScheduled: @escaping @Sendable () async -> Void
 ) async throws {
     let relay = LiveSpeechStreamRelay()
     try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
-            try await sink.play(relay.stream)
+            if let continuousSink = sink as? any HeptapodContinuousSpeechPlaybackSink {
+                try await continuousSink.play(relay.stream, onScheduled: onScheduled)
+            } else {
+                try await sink.play(relay.stream)
+            }
         }
         group.addTask {
             var didYieldAudio = false

@@ -74,6 +74,20 @@ class RunLiveBenchmarkTests(unittest.TestCase):
         self.assertEqual(case.max_buffered_segments, 3)
         self.assertEqual(case.slug, "streaming-en")
 
+    def test_pocket_speech_benchmark_uses_selected_python_and_streaming_bridge(self) -> None:
+        command = benchmark.benchmark_command(
+            benchmark.BenchmarkCase("pocket", "nemotron", 1.0, 16),
+            demo_binary=Path("/tmp/demo"), audio_path=Path("/tmp/input.wav"),
+            uses_system_audio=False, source_language="en", target_language="tr",
+            mt_backend="apple", mt_postedit="none", duration_seconds=10.0,
+            trace_path=Path("/tmp/trace.jsonl"), uses_asr_stabilization=True,
+            uses_punctuation_endpoint=True, uses_speech_output=True,
+            tts_backend="pocket", tts_python_executable="/tmp/custom-python",
+            tts_device="auto", plays_output=True, speech_output_dir=Path("/tmp/audio"),
+        )
+        self.assertEqual(command[command.index("--tts-python") + 1], "/tmp/custom-python")
+        self.assertEqual(command[command.index("--tts-script") + 1], str(TOOLS_DIR / "pocket_turkish_tts.py"))
+
     def test_parse_case_rejects_unknown_asr(self) -> None:
         with self.assertRaisesRegex(
             benchmark.argparse.ArgumentTypeError,

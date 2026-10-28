@@ -46,7 +46,7 @@ weights; live translation remains local after those files are cached.
 git clone https://github.com/TemelGunaydin/HeptapodLocalSpeechEngine.git
 cd HeptapodLocalSpeechEngine
 
-Tools/setup_moss_tts_nano.sh
+Tools/setup_pocket_tts.sh
 Tools/run_live_translation.sh
 ```
 
@@ -192,9 +192,15 @@ Real macOS system-audio live session:
 Tools/run_live_translation.sh
 ```
 
-This defaults to English source audio, Turkish output, compact Qwen ASR, the
-balanced `1.0s / 4 segment` endpointing profile, MADLAD translation, and
-streaming MOSS-TTS-Nano.
+The launcher selects the `realtime` profile: English source audio, Turkish
+output, native streaming Nemotron ASR, `1.0s / 16 ASR update` endpointing, and
+streaming Pocket TTS Turkish with the `female_2` voice. On macOS 26+ it uses
+Apple's installed on-device translation assets; older systems use MADLAD.
+The buffer limit counts stable ASR updates, which can arrive several times
+per captured second. Terminal punctuation and clause boundaries can release
+speech before that limit. One-second capture preserves the speech context
+needed by the current per-chunk VAD; shorter capture is not always more accurate.
+Explicit `--asr`, `--mt`, `--tts`, and capture options override profile defaults.
 The pipeline is fully local after model weights are cached. It does not use a
 WebSocket or remote server; optional Python models run as local persistent child
 processes over JSON-lines pipes.
@@ -213,6 +219,42 @@ The source/target language pair must already be installed in the system
 Translation settings. This path uses the
 [Apple Translation framework](https://developer.apple.com/documentation/translation)
 and does not download or load MADLAD weights.
+
+Choose the other accepted Pocket voice with:
+
+```bash
+Tools/run_live_translation.sh --pocket-voice male_1
+```
+
+All six built-in voices (`female_1` through `female_3`, `male_1` through
+`male_3`) are synthetic. The persistent CPU worker sends 24 kHz PCM as the
+model generates it. The upstream Turkish frontend handles numbers,
+abbreviations, and sentence preparation. Pocket supports Turkish output only;
+other target languages retain their existing TTS choices. A missing environment
+is installed with `Tools/setup_pocket_tts.sh`. The setup pins the runtime and
+model revision; cached Pocket inference requires no network access.
+
+The Pocket stream shortens only very quiet utterance tails, retaining 150 ms
+after the last sample above -72 dBFS. Speech samples and interior pauses are
+preserved. Adaptive playback keeps its existing catch-up rate while another
+utterance is queued, then eases back as the queue drains; the configured speed
+ceiling is unchanged. On the 60-second file fixture, these changes reduced the
+final drain from 8.086 s to 4.564 s with the same twenty sentences and
+translations. See the [tail-latency measurement and PCM checks](Experiments/Results/2026-10-28-pocket-tail-latency-en-tr.md).
+
+Continuous playback now schedules the next utterance while the preceding
+one finishes playing. The same fixture drains in 2.313 s after the input,
+with every sentence preserved and a lower observed peak rate of 1.098.
+Completion still waits for audio to finish at the device; scheduling ahead
+does not mark it played early. See the
+[continuous-playback measurement](Experiments/Results/2026-10-28-continuous-playback-en-tr.md).
+
+[Pocket TTS Turkish](https://huggingface.co/wite-tech/pocket-tts-turkish) is by
+Khaled Moawad, Ammar Rashed, and Ekrem Çetinkaya at Wite Tech, derived from
+[Kyutai's Pocket TTS](https://huggingface.co/kyutai/pocket-tts). Both models use
+[CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/); retain these credits
+when redistributing the model. The Turkish runtime is Apache-2.0. The Turkish
+adaptation adds its own tokenizer, speech fine-tuning and six-layer distillation.
 
 TranslateGemma 4B is also available as an experimental local MLX backend:
 
@@ -283,9 +325,9 @@ semicolons, or colons once the clause has enough words (four at low latency,
 six when balanced), so synthesis starts before the sentence completes. The
 terminal-punctuation endpoint still wins when both fire, and the post-editing
 translator carries the accepted clause history into the next flush. The `low`
-latency preset enables clause endpointing by default.
+and `realtime` latency presets enable clause endpointing by default.
 
-Low and balanced latency presets also enable ASR stabilization. The current
+Realtime, low and balanced latency presets also enable ASR stabilization. The current
 Qwen adapter is still a chunk decoder, but the live session now wraps it in a
 ring-buffer/sliding-window policy: each new speech chunk is decoded with recent
 audio context, consecutive hypotheses are compared, and only the stable prefix
@@ -445,9 +487,12 @@ and the fixed `18/18/18` transcript/output/playback run, is recorded in
 Install the low-latency live voice once:
 
 ```bash
-Tools/setup_moss_tts_nano.sh
+Tools/setup_pocket_tts.sh
 Tools/run_live_translation.sh
 ```
+
+The previous multilingual MOSS backend remains available explicitly with
+`Tools/setup_moss_tts_nano.sh` followed by `--tts moss`.
 
 Install and select the higher-quality Metal backend:
 

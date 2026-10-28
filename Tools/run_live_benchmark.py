@@ -477,8 +477,9 @@ def benchmark_command(
             command.extend(["--output-dir", str(speech_output_dir)])
         if plays_output:
             command.append("--play-output")
-        if tts_backend in {"moss", "chatterbox", "chatterbox-mlx"}:
+        if tts_backend in {"pocket", "moss", "chatterbox", "chatterbox-mlx"}:
             script_name = {
+                "pocket": "pocket_turkish_tts.py",
                 "moss": "moss_tts_nano_bridge.py",
                 "chatterbox": "chatterbox_tts.py",
                 "chatterbox-mlx": "chatterbox_mlx_tts.py",
@@ -896,7 +897,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--tts",
-        choices=["moss", "chatterbox-mlx", "apple", "kokoro", "chatterbox"],
+        choices=["pocket", "moss", "chatterbox-mlx", "apple", "kokoro", "chatterbox"],
         default="moss",
         help="TTS backend used with --speech-output. Defaults to streaming MOSS-TTS-Nano.",
     )
@@ -934,6 +935,7 @@ def main() -> int:
     output_dir = args.output_dir.expanduser().resolve()
     playback_browser_profile_dir = output_dir / "playback-browser-profile" if args.playback_browser else None
     tts_python_value = args.tts_python or {
+        "pocket": ".venv-pocket-tts/bin/python",
         "moss": ".venv-moss-tts-nano/bin/python",
         "chatterbox-mlx": ".venv-chatterbox-mlx/bin/python",
         "chatterbox": ".venv-chatterbox311/bin/python",
@@ -993,8 +995,9 @@ def main() -> int:
         parser.error(f"browser playback page is missing: {BROWSER_PLAYBACK_PAGE}")
     if not args.dry_run and playback_audio_path is not None and args.playback_browser is None and shutil.which("afplay") is None:
         parser.error("afplay is required for --playback-audio")
-    if not args.dry_run and args.speech_output and args.tts in {"moss", "chatterbox", "chatterbox-mlx"}:
+    if not args.dry_run and args.speech_output and args.tts in {"pocket", "moss", "chatterbox", "chatterbox-mlx"}:
         script_name = {
+            "pocket": "pocket_turkish_tts.py",
             "moss": "moss_tts_nano_bridge.py",
             "chatterbox": "chatterbox_tts.py",
             "chatterbox-mlx": "chatterbox_mlx_tts.py",

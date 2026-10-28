@@ -134,7 +134,10 @@ struct HeptapodLiveSpeechDemo {
                 mossPythonExecutable: options.ttsPythonExecutable,
                 mossScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
                 mossVoicePromptURL: options.ttsVoicePromptPath.map(URL.init(fileURLWithPath:)),
-                mossSampleMode: options.mossSampleMode
+                mossSampleMode: options.mossSampleMode,
+                pocketPythonExecutable: options.ttsPythonExecutable,
+                pocketScriptURL: options.ttsScriptPath.map(URL.init(fileURLWithPath:)),
+                pocketVoice: options.pocketVoice
             )
         }
 
@@ -160,6 +163,7 @@ struct HeptapodLiveSpeechDemo {
         MT:   \(options.mtDescriptor.displayName)
         MT post-edit: \(options.mtPostEditBackend.rawValue)
         TTS:  \(options.usesTextOnly ? "off" : options.ttsDescriptor.displayName)
+        Pocket voice: \(options.ttsBackend == .pocket && !options.usesTextOnly ? options.pocketVoice : "not used")
         MOSS sampling: \(options.ttsBackend == .moss && options.usesTextOnly == false ? options.mossSampleMode.rawValue : "not used")
         Flow: \(options.usesTextOnly ? "audio chunk source -> live session -> VAD -> ASR -> MT" : "audio chunk source -> live session -> VAD -> ASR -> MT -> TTS -> playback sink")
         Source: \(options.sourceDescription)
@@ -202,7 +206,8 @@ struct HeptapodLiveSpeechDemo {
                               Apple uses installed system language assets on macOS 26+.
           --mt-postedit <name>
                               Translation post-edit: glossary or none. Default: glossary.
-          --latency <preset>  Live timing preset: low, balanced, or quality. Default: balanced.
+          --latency <preset>  Live timing: realtime, low, balanced, or quality. Default: balanced.
+                              Realtime selects streaming Nemotron for English and Apple MT on macOS 26+.
           --chunk-duration <sec>
                               Audio chunk size for live/file demos. Lower is faster but less stable.
           --max-buffered-segments <count>
@@ -216,11 +221,12 @@ struct HeptapodLiveSpeechDemo {
                               Force sliding-window stable-prefix ASR buffering.
           --no-asr-stabilization
                               Disable sliding-window stable-prefix ASR buffering.
-          --tts <name>        Real mode TTS: moss, chatterbox-mlx, apple, kokoro, or chatterbox.
-                              Default: moss for Turkish; kokoro otherwise.
+          --tts <name>        Real mode TTS: pocket, moss, chatterbox-mlx, apple, kokoro, or chatterbox.
+                              Default: pocket for Turkish; kokoro otherwise.
+          --pocket-voice <id> Pocket voice: female_1...female_3 or male_1...male_3. Default: female_2.
           --tts-script <path> Python TTS bridge script override.
           --tts-python <name> Python executable for the selected Python TTS backend.
-                              Uses the matching local venv for MOSS and Chatterbox MLX.
+                              Uses the matching local venv for Pocket, MOSS and Chatterbox MLX.
           --moss-sample-mode <name>
                               MOSS ONNX sampling: fixed, full, or greedy. Default: fixed.
                               Alternatives change synthesis quality and throughput; opt-in only.
@@ -677,7 +683,7 @@ struct HeptapodLiveSpeechDemo {
     }
 }
 
-private struct DemoOptions {
+struct DemoOptions {
     let isInteractive: Bool
     let usesRealModels: Bool
     let usesMicrophone: Bool
@@ -701,6 +707,7 @@ private struct DemoOptions {
     let sourceLanguageCode: String?
     let targetLanguageCode: String?
     let ttsBackend: DemoTTSBackend
+    let pocketVoice: String
     let ttsScriptPath: String?
     let ttsPythonExecutable: String
     let mossSampleMode: HeptapodMossTTSSampleMode
@@ -733,12 +740,13 @@ private struct DemoOptions {
         var usesPunctuationEndpoint = false
         var usesClauseEndpoint = false
         var usesASRStabilization: Bool?
-        var asrPreset = DemoASRPreset.compact
-        var mtBackend = DemoMTBackend.madlad
+        var asrPreset: DemoASRPreset?
+        var mtBackend: DemoMTBackend?
         var mtPostEditBackend = DemoMTPostEditBackend.glossary
         var sourceLanguageCode: String?
         var targetLanguageCode: String?
         var ttsBackend: DemoTTSBackend?
+        var pocketVoice = "female_2"
         var ttsScriptPath: String?
         var ttsPythonExecutable: String?
         var mossSampleMode = HeptapodMossTTSSampleMode.fixed
@@ -841,6 +849,12 @@ private struct DemoOptions {
                 ttsBackend = backend
             case "--tts-script":
                 ttsScriptPath = try Self.value(after: argument, in: arguments, at: &index)
+            case "--pocket-voice":
+                let voice = try Self.value(after: argument, in: arguments, at: &index)
+                guard HeptapodPocketTurkishTTSAdapter.voices.contains(voice) else {
+                    throw HeptapodPocketTTSError.invalidVoice(voice)
+                }
+                pocketVoice = voice
             case "--tts-python":
                 ttsPythonExecutable = try Self.value(after: argument, in: arguments, at: &index)
             case "--moss-sample-mode":
@@ -912,8 +926,15 @@ private struct DemoOptions {
         self.usesPunctuationEndpoint = usesPunctuationEndpoint || latencyPreset.usesPunctuationEndpoint
         self.usesClauseEndpoint = usesClauseEndpoint || latencyPreset.usesClauseEndpoint
         self.usesASRStabilization = usesASRStabilization ?? (usesTextOnly ? false : latencyPreset.usesASRStabilization)
-        self.asrPreset = asrPreset
-        self.mtBackend = mtBackend
+        let sourceBase = (sourceLanguageCode ?? "en").lowercased().replacingOccurrences(of: "_", with: "-").split(separator: "-").first
+        self.asrPreset = asrPreset ?? (latencyPreset == .realtime && sourceBase == "en" ? .nemotron : .compact)
+        if let mtBackend {
+            self.mtBackend = mtBackend
+        } else if #available(macOS 26.0, iOS 26.0, *), latencyPreset == .realtime {
+            self.mtBackend = .apple
+        } else {
+            self.mtBackend = .madlad
+        }
         self.mtPostEditBackend = mtPostEditBackend
         self.sourceLanguageCode = sourceLanguageCode
         self.targetLanguageCode = targetLanguageCode
@@ -921,6 +942,7 @@ private struct DemoOptions {
             targetLanguageCode: targetLanguageCode ?? "tr"
         )
         self.ttsBackend = resolvedTTSBackend
+        self.pocketVoice = pocketVoice
         self.ttsScriptPath = ttsScriptPath
         self.ttsPythonExecutable = ttsPythonExecutable ?? Self.defaultTTSPythonExecutable(
             for: resolvedTTSBackend
@@ -955,13 +977,15 @@ private struct DemoOptions {
             .first
             .map(String.init) ?? targetLanguageCode
         if baseLanguageCode == "tr" {
-            return .moss
+            return .pocket
         }
         return .kokoro
     }
 
     private static func defaultTTSPythonExecutable(for backend: DemoTTSBackend) -> String {
         switch backend {
+        case .pocket:
+            ".venv-pocket-tts/bin/python"
         case .moss:
             ".venv-moss-tts-nano/bin/python"
         case .chatterboxMLX:
@@ -1021,6 +1045,8 @@ private struct DemoOptions {
 
     var ttsDescriptor: HeptapodModelDescriptor {
         switch ttsBackend {
+        case .pocket:
+            HeptapodModelDescriptor.pocketTurkishTTS
         case .moss:
             HeptapodModelDescriptor.mossTTSNano
         case .chatterboxMLX:
@@ -1058,18 +1084,19 @@ private struct DemoOptions {
     }
 }
 
-private enum DemoMTBackend: String {
+enum DemoMTBackend: String {
     case madlad
     case apple
     case translateGemma = "translategemma"
 }
 
-private enum DemoMTPostEditBackend: String {
+enum DemoMTPostEditBackend: String {
     case none
     case glossary
 }
 
-private enum DemoTTSBackend: String {
+enum DemoTTSBackend: String {
+    case pocket
     case moss
     case chatterboxMLX = "chatterbox-mlx"
     case apple
@@ -1077,7 +1104,7 @@ private enum DemoTTSBackend: String {
     case chatterbox
 }
 
-private enum DemoASRPreset: String {
+enum DemoASRPreset: String {
     case compact
     case quality
     case nemotron
@@ -1105,13 +1132,17 @@ private enum DemoASRPreset: String {
     }
 }
 
-private enum DemoLatencyPreset: String {
+enum DemoLatencyPreset: String {
+    case realtime
     case low
     case balanced
     case quality
 
     var chunkDurationSeconds: Double {
         switch self {
+        case .realtime:
+            // Silero's per-call detector needs enough speech context to retain word edges.
+            1.0
         case .low:
             0.75
         case .balanced:
@@ -1123,6 +1154,9 @@ private enum DemoLatencyPreset: String {
 
     var maximumBufferedSegments: Int {
         switch self {
+        case .realtime:
+            // Native ASR updates arrive several times per capture chunk. Allow a full clause.
+            16
         case .low:
             1
         case .balanced:
@@ -1134,14 +1168,14 @@ private enum DemoLatencyPreset: String {
 
     var usesPunctuationEndpoint: Bool {
         switch self {
-        case .low, .balanced, .quality:
+        case .realtime, .low, .balanced, .quality:
             true
         }
     }
 
     var minimumWordsForPunctuationEndpoint: Int {
         switch self {
-        case .low:
+        case .realtime, .low:
             2
         case .balanced:
             6
@@ -1152,7 +1186,7 @@ private enum DemoLatencyPreset: String {
 
     var usesClauseEndpoint: Bool {
         switch self {
-        case .low:
+        case .realtime, .low:
             true
         case .balanced, .quality:
             false
@@ -1161,6 +1195,8 @@ private enum DemoLatencyPreset: String {
 
     var minimumWordsForClauseEndpoint: Int {
         switch self {
+        case .realtime:
+            6
         case .low:
             4
         case .balanced:
@@ -1172,7 +1208,7 @@ private enum DemoLatencyPreset: String {
 
     var usesASRStabilization: Bool {
         switch self {
-        case .low, .balanced:
+        case .realtime, .low, .balanced:
             true
         case .quality:
             false
@@ -1181,6 +1217,12 @@ private enum DemoLatencyPreset: String {
 
     var asrStabilizationConfiguration: HeptapodASRStabilizationConfiguration {
         switch self {
+        case .realtime:
+            HeptapodASRStabilizationConfiguration(
+                isEnabled: true,
+                maximumWindowChunks: 4,
+                minimumStableWords: 2
+            )
         case .low:
             HeptapodASRStabilizationConfiguration(
                 isEnabled: true,
@@ -1315,8 +1357,9 @@ private struct LiveTraceEvent: Encodable {
     let command: [String]
 }
 
-private struct CompositePlaybackSink:
-    HeptapodStreamingSpeechPlaybackSink,
+struct CompositePlaybackSink:
+    HeptapodContinuousSpeechPlaybackSink,
+    HeptapodCancellableSpeechPlaybackSink,
     HeptapodPlaybackBacklogAware,
     HeptapodPlaybackAudioTracking
 {
@@ -1331,14 +1374,26 @@ private struct CompositePlaybackSink:
     func play(
         _ speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>
     ) async throws {
+        try await play(speechStream, onScheduled: {})
+    }
+
+    func play(
+        _ speechStream: AsyncThrowingStream<HeptapodSynthesizedSpeech, Error>,
+        onScheduled: @escaping @Sendable () async -> Void
+    ) async throws {
         let relays = sinks.map { _ in CompositeSpeechStreamRelay() }
+        let scheduling = CompositePlaybackScheduling(remaining: sinks.count, onScheduled: onScheduled)
         try await withThrowingTaskGroup(of: Void.self) { group in
             for (sink, relay) in zip(sinks, relays) {
                 group.addTask {
-                    if let streamingSink = sink as? any HeptapodStreamingSpeechPlaybackSink {
+                    if let continuousSink = sink as? any HeptapodContinuousSpeechPlaybackSink {
+                        try await continuousSink.play(relay.stream) { await scheduling.finished() }
+                    } else if let streamingSink = sink as? any HeptapodStreamingSpeechPlaybackSink {
                         try await streamingSink.play(relay.stream)
+                        await scheduling.finished()
                     } else {
                         try await sink.play(try await collectCompositeSpeech(from: relay.stream))
+                        await scheduling.finished()
                     }
                 }
             }
@@ -1361,6 +1416,14 @@ private struct CompositePlaybackSink:
             }
 
             try await group.waitForAll()
+        }
+    }
+
+    func cancelPlayback() async {
+        for sink in sinks {
+            if let cancellableSink = sink as? any HeptapodCancellableSpeechPlaybackSink {
+                await cancellableSink.cancelPlayback()
+            }
         }
     }
 
@@ -1390,6 +1453,21 @@ private struct CompositePlaybackSink:
             }
         }
         return nil
+    }
+}
+
+private actor CompositePlaybackScheduling {
+    private var remaining: Int
+    private let onScheduled: @Sendable () async -> Void
+
+    init(remaining: Int, onScheduled: @escaping @Sendable () async -> Void) {
+        self.remaining = remaining
+        self.onScheduled = onScheduled
+    }
+
+    func finished() async {
+        remaining -= 1
+        if remaining == 0 { await onScheduled() }
     }
 }
 
@@ -1468,7 +1546,7 @@ private enum DemoError: LocalizedError {
         case .invalidDuration(let value):
             "Invalid duration: \(value)."
         case .invalidLatencyPreset(let value):
-            "Invalid latency preset: \(value). Use low, balanced, or quality."
+            "Invalid latency preset: \(value). Use realtime, low, balanced, or quality."
         case .invalidMTBackend(let value):
             "Invalid translation backend: \(value). Use madlad, apple, or translategemma."
         case .invalidMTPostEditBackend(let value):
@@ -1478,7 +1556,7 @@ private enum DemoError: LocalizedError {
         case .invalidRangeOption(let option, let value, let range):
             "Invalid value for \(option): \(value). Expected \(range)."
         case .invalidTTSBackend(let value):
-            "Invalid TTS backend: \(value). Use moss, chatterbox-mlx, apple, kokoro, or chatterbox."
+            "Invalid TTS backend: \(value). Use pocket, moss, chatterbox-mlx, apple, kokoro, or chatterbox."
         case .invalidTTSDevice(let value):
             "Invalid TTS device: \(value). Use auto, cpu, mps, or cuda."
         case .invalidMossSampleMode(let value):

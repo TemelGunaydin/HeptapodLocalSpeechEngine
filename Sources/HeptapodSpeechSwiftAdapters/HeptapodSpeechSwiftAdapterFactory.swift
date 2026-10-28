@@ -11,6 +11,7 @@ public enum HeptapodSpeechSwiftAdapterFactory {
             HeptapodModelDescriptor.madladTranslator.id,
             HeptapodModelDescriptor.translateGemma4B.id,
             HeptapodModelDescriptor.mossTTSNano.id,
+            HeptapodModelDescriptor.pocketTurkishTTS.id,
             HeptapodModelDescriptor.chatterboxMLXTTS.id,
             HeptapodModelDescriptor.chatterboxTTS.id,
             HeptapodModelDescriptor.kokoroTTS.id
@@ -64,6 +65,10 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         mossModelDirectoryURL: URL? = nil,
         mossCPUThreads: Int = 8,
         mossSampleMode: HeptapodMossTTSSampleMode = .fixed,
+        pocketPythonExecutable: String = ".venv-pocket-tts/bin/python",
+        pocketScriptURL: URL? = nil,
+        pocketModelDirectoryURL: URL? = nil,
+        pocketVoice: String = "female_2",
         offlineMode: Bool = false
     ) throws -> HeptapodSpeechToSpeechPipeline {
         try requireImplemented(configuration.speechRecognitionModelID, stage: .speechRecognition)
@@ -126,6 +131,10 @@ public enum HeptapodSpeechSwiftAdapterFactory {
                 mossModelDirectoryURL: mossModelDirectoryURL,
                 mossCPUThreads: mossCPUThreads,
                 mossSampleMode: mossSampleMode,
+                pocketPythonExecutable: pocketPythonExecutable,
+                pocketScriptURL: pocketScriptURL,
+                pocketModelDirectoryURL: pocketModelDirectoryURL,
+                pocketVoice: pocketVoice,
                 offlineMode: offlineMode
             )
         )
@@ -206,9 +215,21 @@ public enum HeptapodSpeechSwiftAdapterFactory {
         mossModelDirectoryURL: URL?,
         mossCPUThreads: Int,
         mossSampleMode: HeptapodMossTTSSampleMode,
+        pocketPythonExecutable: String,
+        pocketScriptURL: URL?,
+        pocketModelDirectoryURL: URL?,
+        pocketVoice: String,
         offlineMode: Bool
     ) -> any HeptapodSpeechSynthesizer {
         switch modelID {
+        case HeptapodModelDescriptor.pocketTurkishTTS.id:
+            HeptapodPocketTurkishTTSAdapter(
+                pythonExecutable: pocketPythonExecutable,
+                scriptURL: pocketScriptURL,
+                modelDirectoryURL: pocketModelDirectoryURL,
+                defaultVoice: pocketVoice,
+                offlineMode: offlineMode
+            )
         #if os(macOS)
         case HeptapodModelDescriptor.macOSSystemTTS.id:
             HeptapodMacOSSpeechSynthesizerAdapter()

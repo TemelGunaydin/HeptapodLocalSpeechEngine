@@ -37,6 +37,7 @@ public struct HeptapodModelCatalog: Sendable {
         .seamlessTextTranslator,
         .qwenTTSCompact,
         .mossTTSNano,
+        .pocketTurkishTTS,
         .chatterboxMLXTTS,
         .chatterboxTTS,
         .macOSSystemTTS,
@@ -464,6 +465,28 @@ public extension HeptapodModelDescriptor {
         summary: "Higher-quality local speech output that runs faster than playback on the tested M3 Max.",
         tradeoffs: "Produces a complete segment before playback instead of true audio deltas. It uses Metal and can contend with MLX ASR and translation under load.",
         licenseNote: "mlx-audio is MIT; verify the original Chatterbox model license and reference-voice rights before distribution."
+    )
+
+    static let pocketTurkishTTS = HeptapodModelDescriptor(
+        id: "tts.pocket.turkish",
+        stage: .speechSynthesis,
+        displayName: "Pocket TTS Turkish",
+        provider: "Wite Tech / Kyutai",
+        family: "Pocket TTS",
+        backend: .custom,
+        capabilities: [.batchTTS, .streamingTTS],
+        qualityTier: .balanced,
+        latencyTier: .realtime,
+        status: .adapterRequired,
+        footprint: HeptapodModelFootprint(
+            downloadSize: .megabytes(440), installedSize: .megabytes(440), recommendedMemory: .gigabytes(2)
+        ),
+        languageCoverage: HeptapodLanguageCoverage(
+            targetLanguageCodes: ["tr"], notes: "Turkish-specific model with six synthetic voices; 24 kHz mono output."
+        ),
+        summary: "CPU speech synthesis with native PCM streaming and Turkish text normalization.",
+        tradeoffs: "Turkish only. Requires the local Python environment and a one-time model download.",
+        licenseNote: "Pocket TTS Turkish by Wite Tech and the Kyutai base model are CC-BY-4.0; Python runtime is Apache-2.0. Preserve attribution."
     )
 
     static let macOSSystemTTS = HeptapodModelDescriptor(
