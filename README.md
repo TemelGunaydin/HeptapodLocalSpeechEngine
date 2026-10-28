@@ -236,18 +236,18 @@ model revision; cached Pocket inference requires no network access.
 
 The Pocket stream shortens only very quiet utterance tails, retaining 150 ms
 after the last sample above -72 dBFS. Speech samples and interior pauses are
-preserved. Adaptive playback keeps its existing catch-up rate while another
-utterance is queued, then eases back as the queue drains; the configured speed
-ceiling is unchanged. On the 60-second file fixture, these changes reduced the
-final drain from 8.086 s to 4.564 s with the same twenty sentences and
-translations. See the [tail-latency measurement and PCM checks](Experiments/Results/2026-10-28-pocket-tail-latency-en-tr.md).
+preserved. Adaptive playback keeps its reached catch-up rate while PCM remains,
+including the last sentence, then returns to natural pace when PCM drains.
+The configured speed ceiling and pitch processing are unchanged. See the
+[tail-filter PCM checks](Experiments/Results/2026-10-28-pocket-tail-latency-en-tr.md).
 
 Continuous playback now schedules the next utterance while the preceding
-one finishes playing. The same fixture drains in 2.313 s after the input,
-with every sentence preserved and a lower observed peak rate of 1.098.
+one finishes playing. With steady pacing, the 60-second fixture drains in
+1.984 s after the input, with all twenty sentence pairs preserved and an
+observed peak rate of 1.110, below the 1.15 ceiling.
 Completion still waits for audio to finish at the device; scheduling ahead
-does not mark it played early. See the
-[continuous-playback measurement](Experiments/Results/2026-10-28-continuous-playback-en-tr.md).
+does not mark it played early. See the [steady-pacing measurement](Experiments/Results/2026-10-28-steady-playback-en-tr.md)
+and the [continuous-playback implementation](Experiments/Results/2026-10-28-continuous-playback-en-tr.md).
 
 [Pocket TTS Turkish](https://huggingface.co/wite-tech/pocket-tts-turkish) is by
 Khaled Moawad, Ammar Rashed, and Ekrem Çetinkaya at Wite Tech, derived from

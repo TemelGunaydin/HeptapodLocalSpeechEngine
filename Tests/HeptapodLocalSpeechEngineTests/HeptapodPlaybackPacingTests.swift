@@ -57,12 +57,36 @@ struct HeptapodPlaybackPacingTests {
         pacing.setBacklog(2, at: 5)
         #expect(pacing.rate == catchUpRate)
 
-        // Once only the final utterance remains, ease back to natural pace.
+        // The last utterance is still behind. Keep its pace stable until
+        // its final PCM plays, rather than slowing within the sentence.
         pacing.setBacklog(1, at: 5.5)
-        #expect(pacing.rate < catchUpRate)
-        #expect(pacing.rate > 1)
+        #expect(pacing.rate == catchUpRate)
         pacing.setBacklog(1, at: 7)
+        #expect(pacing.rate == catchUpRate)
+        pacing.completeAudio(duration: 1.5, at: 8)
         #expect(abs(pacing.rate - 1) < 0.0001)
+
+        // Device completion can precede the backlog notification. A fresh
+        // short utterance must not inherit the previous catch-up rate.
+        pacing.enqueueAudio(duration: 0.5, at: 9)
+        #expect(pacing.rate == 1)
+    }
+
+    @Test
+    func catchUpRateRemainsStableInsideOneLongUtterance() {
+        var pacing = HeptapodPlaybackPacing()
+        pacing.setBacklog(1, at: 0)
+        pacing.enqueueAudio(duration: 8, at: 0)
+        for second in 1...3 { pacing.setBacklog(1, at: Double(second)) }
+        let reachedRate = pacing.rate
+        #expect(abs(reachedRate - 1.15) < 0.0001)
+        pacing.completeAudio(duration: 7, at: 4)
+        pacing.setBacklog(1, at: 5)
+        #expect(pacing.rate == reachedRate)
+        pacing.completeAudio(duration: 1, at: 6)
+        #expect(pacing.rate == 1)
+        #expect(pacing.state.pendingAudioDuration == 0)
+        #expect(pacing.state.completedAudioDuration == 8)
     }
 
     @Test(arguments: [Float(1), 1.15, 1.35])

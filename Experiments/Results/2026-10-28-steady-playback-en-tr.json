@@ -1,0 +1,108 @@
+{
+  "environment": {
+    "starting_head": "f19b88b86a1c25fc400cbf9d62c93b6143450558",
+    "hardware": "Apple M3 Max, 64 GiB",
+    "macos": "27.0.1",
+    "date": "2026-10-28",
+    "fixture": {
+      "source_seconds": 11.230375,
+      "source_sha256": "93a02fecee39e3a75d53f532e4d88c1d0b99de241015cd27ba6115de8e85b130",
+      "repeated_sha256": "3a2a80d7a8b24d83dbe83e83cd4599db2bad756e7ce569d8ca83ea1e4b0755b5",
+      "rate": 16000,
+      "channels": 1,
+      "width": 2
+    },
+    "model_id": "wite-tech/pocket-tts-turkish",
+    "model_revision": "fcbd37c74dc127be846face0ff36062e9a939f7b",
+    "runtime_git_revision": "88df358df6b57fb6bddaa82ac7d2d856521b7a20",
+    "pocket_tts": "3.3.0",
+    "torch": "2.15.0",
+    "numpy": "2.4.6",
+    "raw_artifacts": "/private/tmp/heptapod-live-20261028.bq52d7pb"
+  },
+  "starting_head": "f19b88b86a1c25fc400cbf9d62c93b6143450558",
+  "runs": {
+    "pocket-continuity-verified": {
+      "run_completion_seconds": 62.313424944877625,
+      "tail_after_60s_seconds": 2.3134249448776245,
+      "last_capture_seconds": 60.533596992492676,
+      "last_transcript_accepted_seconds": 57.55186200141907,
+      "last_playback_completion_seconds": 62.31315803527832,
+      "last_accepted_to_device_completion_seconds": 4.761296033859253,
+      "last_capture_to_device_completion_seconds": 1.7795610427856445,
+      "pcm_generated_seconds": 57.08441666666667,
+      "pcm_completed_seconds": 57.084416666666,
+      "pending_pcm_at_completion_seconds": 0,
+      "peak_pending_pcm_seconds": 4.751291666666669,
+      "peak_playback_rate": 1.098243,
+      "peak_playback_queue": 2,
+      "outputs": 20,
+      "completed_playbacks": 20,
+      "transcripts_and_translations_match": true,
+      "wav_bytes_match_result_events": true,
+      "ordered_output_ids": true
+    },
+    "pocket-lastmile-baseline": {
+      "run_completion_seconds": 62.23148000240326,
+      "tail_after_60s_seconds": 2.2314800024032593,
+      "last_capture_seconds": 60.46186697483063,
+      "last_transcript_accepted_seconds": 57.45766890048981,
+      "last_playback_completion_seconds": 62.23111093044281,
+      "last_accepted_to_device_completion_seconds": 4.773442029953003,
+      "last_capture_to_device_completion_seconds": 1.7692439556121826,
+      "pcm_generated_seconds": 57.08441666666667,
+      "pcm_completed_seconds": 57.08441666666603,
+      "pending_pcm_at_completion_seconds": 0,
+      "peak_pending_pcm_seconds": 4.751291666666669,
+      "peak_playback_rate": 1.098055,
+      "peak_playback_queue": 2,
+      "outputs": 20,
+      "completed_playbacks": 20,
+      "transcripts_and_translations_match": true,
+      "wav_bytes_match_result_events": true,
+      "ordered_output_ids": true
+    },
+    "pocket-lastmile-steady": {
+      "run_completion_seconds": 61.98361599445343,
+      "tail_after_60s_seconds": 1.9836159944534302,
+      "last_capture_seconds": 60.49184000492096,
+      "last_transcript_accepted_seconds": 57.480185985565186,
+      "last_playback_completion_seconds": 61.9835000038147,
+      "last_accepted_to_device_completion_seconds": 4.503314018249512,
+      "last_capture_to_device_completion_seconds": 1.4916599988937378,
+      "pcm_generated_seconds": 57.08441666666667,
+      "pcm_completed_seconds": 57.084416666666,
+      "pending_pcm_at_completion_seconds": 0,
+      "peak_pending_pcm_seconds": 4.751291666666669,
+      "peak_playback_rate": 1.1095645,
+      "peak_playback_queue": 2,
+      "outputs": 20,
+      "completed_playbacks": 20,
+      "transcripts_and_translations_match": true,
+      "wav_bytes_match_result_events": true,
+      "ordered_output_ids": true
+    }
+  },
+  "tail_reduction_seconds": 0.2478640079498291,
+  "tail_reduction_percent": 11.107606058888475,
+  "last_accepted_to_completion_reduction_seconds": 0.2701280117034912,
+  "rejected_640ms_capture": {
+    "outputs": 18,
+    "recognized_words": 181,
+    "asr_word_edits": 5,
+    "run_completion_seconds": 63.05128598213196,
+    "reason": "Fewer words and fragmented/merged sentences; baseline has 185 words, 20 outputs, and 3 word edits."
+  },
+  "validation": {
+    "swift_tests": 126,
+    "regression_failed_before_fix": true,
+    "asr_word_edits_unchanged": 3,
+    "reference_words": 185,
+    "tts_and_pcm_paths_unchanged": true
+  },
+  "limitations": [
+    "One synthetic repeated 60-second input, not a listening quality study.",
+    "Continuous speech retains the reached rate until PCM drains; pitch handling and the 1.15 ceiling are unchanged.",
+    "File replay uses relative sleeps; final capture and transcript acceptance times are also reported to separate timer drift from playback behavior."
+  ]
+}

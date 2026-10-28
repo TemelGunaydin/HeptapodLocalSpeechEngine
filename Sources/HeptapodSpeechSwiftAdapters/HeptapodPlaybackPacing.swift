@@ -72,13 +72,15 @@ struct HeptapodPlaybackPacing: Sendable {
             increase = Float(min(3, max(0, segmentCount - 1))) * 0.05
         }
         var target = min(maximumRate, baseRate + increase)
-        if isTrackingAudio, segmentCount > 1 {
-            // A short queued utterance can briefly lower the PCM total while
-            // playback is still behind. Keep the catch-up pace already reached
-            // until that queue drains, instead of braking at every sentence.
+        if isTrackingAudio, pendingDuration > 0 {
+            // Keep the reached pace through a continuous run of audio,
+            // including its last sentence. A shrinking queue should not
+            // cause speech to slow mid-utterance while it is still draining.
             target = max(target, rate)
         }
-        if segmentCount == 0, pendingDuration == 0 {
+        if pendingDuration == 0, isTrackingAudio || segmentCount == 0 {
+            // Device completion can precede the backlog notification. Once
+            // PCM really drains, the next utterance starts at natural pace.
             rate = baseRate
         } else {
             // Limit rate changes by wall time, not by TTS chunk count.
